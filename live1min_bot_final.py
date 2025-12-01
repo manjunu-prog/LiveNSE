@@ -1,28 +1,29 @@
 """
 Merged Option-Chain Analyzer for Streamlit
-- Combines logic from two provided scripts
-- Keeps Decision Engine, Δ OI/Volume, Max Pain, Support/Resistance, Heavy Buyers/Sellers
-- Removes Telegram sending entirely
-- Shows a Telegram-style formatted message inside Streamlit when you press "Run Analysis"
-- Keeps the bar visuals (█ and ░) and emojis exactly as requested
-
-Usage:
-- pip install streamlit pandas requests
-- streamlit run this_script.py
+- Auto-refresh every 30 seconds
+- Quick buttons for Top 10 symbols
+- Shows Telegram-style formatted message (bars + emojis)
+- Includes Decision Engine, Delta OI, Heavy Sellers/Buyers, Max Pain, PCR, etc.
 """
-# python3.11 -m streamlit run liveNSE.py
 
 import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime
 
-st.set_page_config(page_title="Option Chain Analyzer (Telegram-style output)", layout="wide")
-st.title("📡 Option Chain Analyzer — Telegram-style Output (Streamlit)")
+# ============================================================
+# STREAMLIT CONFIG
+# ============================================================
+st.set_page_config(page_title="Option Chain Analyzer", layout="wide")
+st.title("📡 Option Chain Analyzer — Telegram-style Output")
 
-# ---------------------------
-# Helper formatting functions
-# ---------------------------
+AUTO_REFRESH_RATE = 30  # seconds
+st.experimental_autorefresh(interval=AUTO_REFRESH_RATE * 1000, key="auto_refresh")
+
+
+# ============================================================
+# HELPER FORMATTING
+# ============================================================
 def fmt_lakh(x):
     try:
         return f"{x/100000:.2f}L"
@@ -55,19 +56,7 @@ def signed_lakh(v):
     else:
         return f"-{fmt_lakh(abs(v))}"
 
-def signed_fmt_role(value, role):
-    # role: 'seller' or 'buyer'
-    try:
-        value = int(value)
-    except:
-        value = 0
-    if role == "seller":
-        return f"-{fmt_lakh(value)}"
-    else:
-        return f"+{fmt_int(value)}"
-
-def bar(value, max_value, length=20, color="green"):
-    # keep identical visual style as original scripts
+def bar(value, max_value, length=18, color="green"):
     try:
         value = int(value)
     except:
@@ -76,19 +65,19 @@ def bar(value, max_value, length=20, color="green"):
         filled = 0
     else:
         filled = int((value / max_value) * length)
+
     filled = max(0, min(length, filled))
     empty = length - filled
-    block = "█"
-    hollow = "░"
-    visual = block * filled + hollow * empty
+
+    visual = "█" * filled + "░" * empty
     prefix = "🟢 " if color == "green" else "🔴 "
     return prefix + visual
 
-# ---------------------------
-# Fetch option chain from NSE
-# ---------------------------
+
+# ============================================================
+# OPTION CHAIN FETCH (NSE)
+# ============================================================
 def get_option_chain(symbol):
-    # returns (df, raw_json) or (None, None) on failure
     if symbol in ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]:
         url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
     else:
@@ -102,11 +91,10 @@ def get_option_chain(symbol):
 
     session = requests.Session()
     try:
-        session.get("https://www.nseindia.com", headers=headers, timeout=10)
-        raw = session.get(url, headers=headers, timeout=10).json()
+        session.get("https://www.nseindia.com", headers=headers, timeout=8)
+        raw = session.get(url, headers=headers, timeout=8).json()
         records = raw.get("records", {}).get("data", [])
-    except Exception as e:
-        st.error(f"NSE fetch error: {e}")
+    except:
         return None, None
 
     rows = []
@@ -129,27 +117,21 @@ def get_option_chain(symbol):
             "TOTAL_OI": ce_oi + pe_oi
         })
 
-    if not rows:
-        return None, raw
-
-    df = pd.DataFrame(rows).dropna().sort_values("Strike").reset_index(drop=True)
+    df = pd.DataFrame(rows).dropna().sort_values("Strike")
     return df, raw
 
-# ---------------------------
-# Extract spot
-# ---------------------------
-def fetch_spot_from_nse(raw):
+
+def fetch_spot(raw):
     try:
         return float(raw["records"]["underlyingValue"])
     except:
         return None
 
-# ---------------------------
-# Max pain
-# ---------------------------
+
+# ============================================================
+# MAX PAIN
+# ============================================================
 def calc_max_pain(df):
-    if df is None or df.empty:
-        return None
     strikes = df["Strike"].values
     ce_oi = df.set_index("Strike")["CE_OI"].to_dict()
     pe_oi = df.set_index("Strike")["PE_OI"].to_dict()
@@ -168,95 +150,84 @@ def calc_max_pain(df):
             best_val = total
             best = exp
 
-    return int(best) if best is not None else None
+    return int(best)
 
-# ---------------------------
-# Support & resistance
-# ---------------------------
+
+# ============================================================
+# SUPPORT/RESISTANCE
+# ============================================================
 def support_resistance(df):
-    if df is None or df.empty:
-        return [], []
     supports = df.sort_values("PE_OI", ascending=False).head(2)["Strike"].tolist()
     resists = df.sort_values("CE_OI", ascending=False).head(2)["Strike"].tolist()
-    # Ensure two values exist
+
     while len(supports) < 2:
         supports.append(None)
     while len(resists) < 2:
         resists.append(None)
+
     return supports, resists
 
-# ---------------------------
-# Analysis function
-# ---------------------------
+
+# ============================================================
+# MAIN ANALYZER (NO LOOP)
+# ============================================================
 def analyze(symbol="NIFTY"):
-    # Fetch
+
     df, raw = get_option_chain(symbol)
     if df is None or df.empty:
-        return None, "ERROR: Failed to fetch option chain."
+        return None, "ERROR: NSE Blocked or No Data"
 
-    spot = fetch_spot_from_nse(raw)
+    spot = fetch_spot(raw)
     now = datetime.now().strftime("%H:%M:%S")
 
-    # totals
     ce_total = df["CE_OI"].sum()
     pe_total = df["PE_OI"].sum()
     ce_vol_total = df["CE_VOL"].sum()
     pe_vol_total = df["PE_VOL"].sum()
 
-    # previous values from session_state (if any)
-    prev_df = st.session_state.get("prev_df", None)
-    prev_spot = st.session_state.get("prev_spot", None)
-    prev_ce_total = st.session_state.get("prev_ce_total", None)
-    prev_pe_total = st.session_state.get("prev_pe_total", None)
-    prev_ce_vol = st.session_state.get("prev_ce_vol", None)
-    prev_pe_vol = st.session_state.get("prev_pe_vol", None)
-    previous_bias = st.session_state.get("previous_bias", None)
+    # Previous values from session
+    prev_df = st.session_state.get("prev_df")
+    prev_spot = st.session_state.get("prev_spot")
+    prev_ce_total = st.session_state.get("prev_ce_total")
+    prev_pe_total = st.session_state.get("prev_pe_total")
+    prev_ce_vol = st.session_state.get("prev_ce_vol")
+    prev_pe_vol = st.session_state.get("prev_pe_vol")
 
-    # Δ total
     d_ce_oi = None if prev_ce_total is None else ce_total - prev_ce_total
     d_pe_oi = None if prev_pe_total is None else pe_total - prev_pe_total
     d_ce_vol = None if prev_ce_vol is None else ce_vol_total - prev_ce_vol
     d_pe_vol = None if prev_pe_vol is None else pe_vol_total - prev_pe_vol
     spot_move = None if prev_spot is None else round(spot - prev_spot, 2)
 
-    # Max Pain & levels
     max_pain = calc_max_pain(df)
     supports, resists = support_resistance(df)
     pcr = round(pe_total / ce_total, 2) if ce_total else 0
 
-    # Writers (sellers)
+    # Seller side
     seller_side = "CE" if ce_total > pe_total else "PE"
     seller_label = "CE Sellers" if seller_side == "CE" else "PE Sellers"
 
-    # Buyers (premium)
+    # Buyer side
     buyer_side = "CE" if ce_vol_total > pe_vol_total else "PE"
     buyer_label = "CE Buyers" if buyer_side == "CE" else "PE Buyers"
 
-    # Heavy sellers (top 4)
+    # Heavy sellers
     s_df = df.sort_values(f"{seller_side}_OI", ascending=False).head(4)
-    max_s_val = s_df[f"{seller_side}_OI"].max() if not s_df.empty else 0
-    seller_lines = []
-    for _, r in s_df.iterrows():
-        strike = int(r["Strike"])
-        oi_val = int(r[f"{seller_side}_OI"])
-        seller_lines.append(f"{strike}  {bar(oi_val, max_s_val, color='red')}  {signed_lakh(oi_val)}")
+    max_s_val = s_df[f"{seller_side}_OI"].max()
+    seller_lines = [
+        f"{int(r['Strike'])}  {bar(r[f'{seller_side}_OI'], max_s_val, color='red')}  {signed_lakh(r[f'{seller_side}_OI'])}"
+        for _, r in s_df.iterrows()
+    ]
 
-    if not seller_lines:
-        seller_lines = ["No heavy sellers data"]
-
-    # Heavy buyers (top 4 by volume)
+    # Heavy buyers
     b_df = df.sort_values(f"{buyer_side}_VOL", ascending=False).head(4)
-    max_b_val = b_df[f"{buyer_side}_VOL"].max() if not b_df.empty else 0
-    buyer_lines = []
-    for _, r in b_df.iterrows():
-        strike = int(r["Strike"])
-        vol_val = int(r[f"{buyer_side}_VOL"])
-        buyer_lines.append(f"{strike}  {bar(vol_val, max_b_val, color='green')}  +{fmt_int(vol_val)}")
+    max_b_val = b_df[f"{buyer_side}_VOL"].max()
+    buyer_lines = [
+        f"{int(r['Strike'])}  {bar(r[f'{buyer_side}_VOL'], max_b_val, color='green')}  +{fmt_int(r[f'{buyer_side}_VOL'])}"
+        for _, r in b_df.iterrows()
+    ]
 
-    if not buyer_lines:
-        buyer_lines = ["No heavy buyers data"]
-
-    # Strike-wise ΔOI (only if previous exists)
+    # ΔOI strike-wise block
     delta_block = ""
     if prev_df is not None:
         merged = df.set_index("Strike")[["CE_OI", "PE_OI"]].join(
@@ -266,46 +237,44 @@ def analyze(symbol="NIFTY"):
 
         merged["dCE"] = merged["CE_OI_now"] - merged["CE_OI_prev"]
         merged["dPE"] = merged["PE_OI_now"] - merged["PE_OI_prev"]
-        merged_reset = merged.reset_index()
 
+        merged_reset = merged.reset_index()
         top = merged_reset.sort_values(["dCE", "dPE"], ascending=False).head(5)
-        delta_block = "Δ OI (Top strikes):\n"
+
+        delta_block = "Δ OI (Top Strikes):\n"
         for _, r in top.iterrows():
-            delta_block += f"{int(r['Strike'])}:  ΔCE {signed_fmt(int(r['dCE']))}  |  ΔPE {signed_fmt(int(r['dPE']))}\n"
+            delta_block += f"{int(r['Strike'])}:  ΔCE {signed_fmt(r['dCE'])} | ΔPE {signed_fmt(r['dPE'])}\n"
         delta_block += "\n"
 
-    # Institutional Direction Engine (Decision)
+    # Decision Engine
     decision = "NO CLEAR SIGNAL"
     confidence = 30
     reasons = []
 
     if d_ce_oi is not None and d_pe_oi is not None and spot_move is not None:
-        # CE writing + price falling => bearish → Buy PE
+
         if d_ce_oi > 0 and spot_move < 0:
             decision = "BUY PE"
             confidence = 85
-            reasons.append("CE OI increased + Spot falling → Strong Call Writing → Bearish")
+            reasons.append("CE OI ↑ + Spot ↓ → Bearish")
 
-        # PE writing + price rising => bullish → Buy CE
         elif d_pe_oi > 0 and spot_move > 0:
             decision = "BUY CE"
             confidence = 85
-            reasons.append("PE OI increased + Spot rising → Strong Put Writing → Bullish")
+            reasons.append("PE OI ↑ + Spot ↑ → Bullish")
 
-        # CE unwinding + spot rising => bullish
         elif d_ce_oi < 0 and spot_move > 0:
             decision = "BUY CE"
             confidence = 70
-            reasons.append("CE OI dropped → Call sellers exiting → Bullish")
+            reasons.append("CE Unwinding + Spot ↑ → Bullish")
 
-        # PE unwinding + spot falling => bearish
         elif d_pe_oi < 0 and spot_move < 0:
             decision = "BUY PE"
             confidence = 70
-            reasons.append("PE OI dropped → Put sellers exiting → Bearish")
+            reasons.append("PE Unwinding + Spot ↓ → Bearish")
 
-    # Build Telegram-style message (single string)
-    message = (
+    # Build Telegram-style message
+    msg = (
         f"📊 {symbol} OI Summary — {now}\n"
         f"Spot: {spot} (Δ {spot_move if spot_move is not None else 0})\n\n"
         f"Total CE OI: {fmt_int(ce_total)} | Total PE OI: {fmt_int(pe_total)}\n"
@@ -319,67 +288,48 @@ def analyze(symbol="NIFTY"):
         f"Support: {supports[0]}, {supports[1]}\n"
         f"Resistance: {resists[0]}, {resists[1]}\n\n"
         f"🎯 Decision: {decision} (Confidence {confidence}%)\n"
-        f"Reason: {' | '.join(reasons) if reasons else 'Not enough strong OI signals'}\n"
+        f"Reason: {' | '.join(reasons) if reasons else 'Not enough signals'}\n"
     )
 
-    # Trend change detection (to show as a separate short message)
-    curr_bias = "CE" if ce_total > pe_total else "PE"
-    trend_change_msg = None
-    if previous_bias is not None and curr_bias != previous_bias:
-        trend_change_msg = f"⚠️ Writer Trend Change: Prev={previous_bias}, Now={curr_bias}"
-
-    # Save current state to session_state for next run
+    # Save state
     st.session_state["prev_df"] = df.copy()
     st.session_state["prev_spot"] = spot
     st.session_state["prev_ce_total"] = ce_total
     st.session_state["prev_pe_total"] = pe_total
     st.session_state["prev_ce_vol"] = ce_vol_total
     st.session_state["prev_pe_vol"] = pe_vol_total
-    st.session_state["previous_bias"] = curr_bias
 
-    return message, trend_change_msg
+    return msg
 
-# ---------------------------
-# Streamlit UI
-# ---------------------------
-col1, col2 = st.columns([3, 1])
-with col1:
-    symbol = st.text_input("Symbol (e.g. NIFTY, BANKNIFTY, INFY)", value="NIFTY").strip().upper()
-with col2:
-    run_btn = st.button("Run Analysis")
+
+# ============================================================
+# STREAMLIT UI — SYMBOL BUTTONS
+# ============================================================
+st.subheader("Quick Select Index / Stocks")
+
+top_symbols = [
+    "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY",
+    "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "SBIN"
+]
+
+cols = st.columns(5)
+clicked = None
+for i, sym in enumerate(top_symbols):
+    if cols[i % 5].button(sym):
+        clicked = sym
+
+if clicked:
+    st.session_state["selected_symbol"] = clicked
+
+symbol = st.session_state.get("selected_symbol", "NIFTY")
+st.success(f"Analyzing symbol: {symbol}")
 
 st.markdown("---")
 
-# Show instructions / last message
-if "last_message" not in st.session_state:
-    st.session_state["last_message"] = ""
+# ============================================================
+# RUN ANALYSIS
+# ============================================================
+msg = analyze(symbol)
 
-# Run when button clicked
-if run_btn:
-    with st.spinner("Fetching option chain and analyzing..."):
-        msg, trend_msg = analyze(symbol=symbol)
-        if msg is None:
-            st.error("Analysis failed. See earlier error.")
-        else:
-            st.session_state["last_message"] = msg
-            if trend_msg:
-                st.session_state["trend_message"] = trend_msg
-            else:
-                st.session_state["trend_message"] = ""
-
-# Display output area (Telegram style)
-if st.session_state.get("trend_message"):
-    st.info(st.session_state["trend_message"])
-
-if st.session_state.get("last_message"):
-    st.code(st.session_state["last_message"], language=None)
-else:
-    st.info("Press **Run Analysis** to fetch data and show Telegram-style output here.")
-
-# Optional: allow user to clear saved previous snapshot (useful if you want deltas to reset)
-if st.button("Reset previous snapshot (clear Δ calculations)"):
-    keys = ["prev_df", "prev_spot", "prev_ce_total", "prev_pe_total", "prev_ce_vol", "prev_pe_vol", "previous_bias", "last_message", "trend_message"]
-    for k in keys:
-        if k in st.session_state:
-            del st.session_state[k]
-    st.experimental_rerun()
+if msg is None:
+    st.error("Error fetching data. Try
