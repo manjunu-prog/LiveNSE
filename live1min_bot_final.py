@@ -1,10 +1,11 @@
 """
-Merged Option-Chain Analyzer for Streamlit
-- Auto-refresh every 30 seconds
-- Quick buttons for Top 10 symbols
-- Telegram-style formatted output
-- Includes Delta OI, Decision Engine, Heavy Sellers/Buyers, Max Pain, PCR
-- ZERO Telegram dependency
+FINAL Option Chain Analyzer for Streamlit
+- Auto-refresh every 30 sec (st.autorefresh)
+- Top 10 Quick Symbol Buttons
+- Telegram-style message output with bars (█ ░)
+- CE/PE Δ OI, Δ Vol, Max Pain, PCR, Support/Resistance
+- Heavy Sellers/Buyers
+- Decision Engine
 """
 
 import streamlit as st
@@ -16,10 +17,10 @@ from datetime import datetime
 # STREAMLIT CONFIG
 # ============================================================
 st.set_page_config(page_title="Option Chain Analyzer", layout="wide")
-st.title("📡 Option Chain Analyzer — Telegram-style Output")
+st.title("📡 Option Chain Analyzer — Telegram Style Output")
 
 AUTO_REFRESH_RATE = 30  # seconds
-st.experimental_autorefresh(interval=AUTO_REFRESH_RATE * 1000, key="auto_refresh")
+st.autorefresh(interval=AUTO_REFRESH_RATE * 1000, key="auto_refresh")
 
 
 # ============================================================
@@ -75,7 +76,7 @@ def bar(value, max_value, length=18, color="green"):
 
 
 # ============================================================
-# NSE FETCH
+# NSE FETCH FUNCTION
 # ============================================================
 def get_option_chain(symbol):
     if symbol in ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]:
@@ -93,15 +94,15 @@ def get_option_chain(symbol):
     try:
         session.get("https://www.nseindia.com", headers=headers, timeout=8)
         raw = session.get(url, headers=headers, timeout=8).json()
-        records = raw.get("records", {}).get("data", [])
+        records = raw["records"]["data"]
     except:
         return None, None
 
     rows = []
-    for it in records:
-        strike = it.get("strikePrice")
-        ce = it.get("CE")
-        pe = it.get("PE")
+    for item in records:
+        strike = item.get("strikePrice")
+        ce = item.get("CE")
+        pe = item.get("PE")
 
         rows.append({
             "Strike": strike,
@@ -126,7 +127,7 @@ def fetch_spot(raw):
 # MAX PAIN
 # ============================================================
 def calc_max_pain(df):
-    strikes = df["Strike"].values
+    strikes = df["Strike"].tolist()
     ce_oi = df.set_index("Strike")["CE_OI"].to_dict()
     pe_oi = df.set_index("Strike")["PE_OI"].to_dict()
 
@@ -138,9 +139,8 @@ def calc_max_pain(df):
         for k in strikes:
             if exp > k:
                 total += (exp - k) * ce_oi[k]
-            if exp < k:
+            elif exp < k:
                 total += (k - exp) * pe_oi[k]
-
         if best_value is None or total < best_value:
             best_value = total
             best_strike = exp
@@ -153,20 +153,21 @@ def calc_max_pain(df):
 # ============================================================
 def support_resistance(df):
     support = df.sort_values("PE_OI", ascending=False).head(2)["Strike"].tolist()
-    resistance = df.sort_values("CE_OI", ascending=False).head(2)["Strike"].tolist()
+    res = df.sort_values("CE_OI", ascending=False).head(2)["Strike"].tolist()
 
     while len(support) < 2:
         support.append(None)
-    while len(resistance) < 2:
-        resistance.append(None)
+    while len(res) < 2:
+        res.append(None)
 
-    return support, resistance
+    return support, res
 
 
 # ============================================================
-# MAIN ANALYZER LOGIC
+# MAIN ANALYZER
 # ============================================================
 def analyze(symbol="NIFTY"):
+
     df, raw = get_option_chain(symbol)
     if df is None or df.empty:
         return None
@@ -179,7 +180,7 @@ def analyze(symbol="NIFTY"):
     ce_vol_total = df["CE_VOL"].sum()
     pe_vol_total = df["PE_VOL"].sum()
 
-    # Previous snapshot
+    # previous session
     prev_df = st.session_state.get("prev_df")
     prev_spot = st.session_state.get("prev_spot")
     prev_ce_total = st.session_state.get("prev_ce_total")
@@ -187,53 +188,53 @@ def analyze(symbol="NIFTY"):
     prev_ce_vol = st.session_state.get("prev_ce_vol")
     prev_pe_vol = st.session_state.get("prev_pe_vol")
 
-    # Delta values
+    # deltas
     d_ce_oi = None if prev_ce_total is None else ce_total - prev_ce_total
     d_pe_oi = None if prev_pe_total is None else pe_total - prev_pe_total
     d_ce_vol = None if prev_ce_vol is None else ce_vol_total - prev_ce_vol
     d_pe_vol = None if prev_pe_vol is None else pe_vol_total - prev_pe_vol
     spot_move = None if prev_spot is None else round(spot - prev_spot, 2)
 
-    # Levels
     max_pain = calc_max_pain(df)
     support, resistance = support_resistance(df)
     pcr = round(pe_total / ce_total, 2) if ce_total else 0
 
     seller_side = "CE" if ce_total > pe_total else "PE"
-    seller_label = "CE Sellers" if seller_side == "CE" else "PE Sellers"
-
     buyer_side = "CE" if ce_vol_total > pe_vol_total else "PE"
+
+    seller_label = "CE Sellers" if seller_side == "CE" else "PE Sellers"
     buyer_label = "CE Buyers" if buyer_side == "CE" else "PE Buyers"
 
-    # Heavy sellers
+    # Heavy Sellers
     s_df = df.sort_values(f"{seller_side}_OI", ascending=False).head(4)
     max_s_val = s_df[f"{seller_side}_OI"].max()
+
     seller_lines = [
         f"{int(r['Strike'])}  {bar(r[f'{seller_side}_OI'], max_s_val, color='red')}  {signed_lakh(r[f'{seller_side}_OI'])}"
         for _, r in s_df.iterrows()
     ]
 
-    # Heavy buyers
+    # Heavy Buyers
     b_df = df.sort_values(f"{buyer_side}_VOL", ascending=False).head(4)
     max_b_val = b_df[f"{buyer_side}_VOL"].max()
+
     buyer_lines = [
         f"{int(r['Strike'])}  {bar(r[f'{buyer_side}_VOL'], max_b_val, color='green')}  +{fmt_int(r[f'{buyer_side}_VOL'])}"
         for _, r in b_df.iterrows()
     ]
 
-    # ΔOI Strikewise
+    # Δ OI (top strikes)
     delta_block = ""
     if prev_df is not None:
-        merged = df.set_index("Strike")[["CE_OI", "PE_OI"]].join(
+        merge = df.set_index("Strike")[["CE_OI", "PE_OI"]].join(
             prev_df.set_index("Strike")[["CE_OI", "PE_OI"]],
             how="left", lsuffix="_now", rsuffix="_prev"
         ).fillna(0)
 
-        merged["dCE"] = merged["CE_OI_now"] - merged["CE_OI_prev"]
-        merged["dPE"] = merged["PE_OI_now"] - merged["PE_OI_prev"]
-        merged = merged.reset_index()
+        merge["dCE"] = merge["CE_OI_now"] - merge["CE_OI_prev"]
+        merge["dPE"] = merge["PE_OI_now"] - merge["PE_OI_prev"]
 
-        top = merged.sort_values(["dCE", "dPE"], ascending=False).head(5)
+        top = merge.reset_index().sort_values(["dCE", "dPE"], ascending=False).head(5)
 
         delta_block = "Δ OI (Top Strikes):\n"
         for _, r in top.iterrows():
@@ -245,30 +246,38 @@ def analyze(symbol="NIFTY"):
     confidence = 30
     reasons = []
 
-    if d_ce_oi is not None and d_pe_oi is not None and spot_move is not None:
+    if (
+        d_ce_oi is not None
+        and d_pe_oi is not None
+        and spot_move is not None
+    ):
 
+        # CE writing + spot falling
         if d_ce_oi > 0 and spot_move < 0:
             decision = "BUY PE"
             confidence = 85
             reasons.append("CE OI ↑ + Spot ↓ → Bearish")
 
+        # PE writing + spot rising
         elif d_pe_oi > 0 and spot_move > 0:
             decision = "BUY CE"
             confidence = 85
             reasons.append("PE OI ↑ + Spot ↑ → Bullish")
 
+        # CE unwinding + spot rising
         elif d_ce_oi < 0 and spot_move > 0:
             decision = "BUY CE"
             confidence = 70
-            reasons.append("CE Unwinding + Spot ↑ → Bullish")
+            reasons.append("CE unwinding + Spot ↑ → Bullish")
 
+        # PE unwinding + spot falling
         elif d_pe_oi < 0 and spot_move < 0:
             decision = "BUY PE"
             confidence = 70
-            reasons.append("PE Unwinding + Spot ↓ → Bearish")
+            reasons.append("PE unwinding + Spot ↓ → Bearish")
 
-    # Build Output Message
-    message = (
+    # Final text output
+    output = (
         f"📊 {symbol} OI Summary — {now}\n"
         f"Spot: {spot} (Δ {spot_move if spot_move is not None else 0})\n\n"
         f"Total CE OI: {fmt_int(ce_total)} | Total PE OI: {fmt_int(pe_total)}\n"
@@ -283,10 +292,10 @@ def analyze(symbol="NIFTY"):
         f"Support: {support[0]}, {support[1]}\n"
         f"Resistance: {resistance[0]}, {resistance[1]}\n\n"
         f"🎯 Decision: {decision} (Confidence {confidence}%)\n"
-        f"Reason: {' | '.join(reasons) if reasons else 'Not enough signals'}\n"
+        f"Reason: {' | '.join(reasons) if reasons else 'Not enough strong signals'}\n"
     )
 
-    # Save state
+    # Save into session state
     st.session_state["prev_df"] = df.copy()
     st.session_state["prev_spot"] = spot
     st.session_state["prev_ce_total"] = ce_total
@@ -294,7 +303,7 @@ def analyze(symbol="NIFTY"):
     st.session_state["prev_ce_vol"] = ce_vol_total
     st.session_state["prev_pe_vol"] = pe_vol_total
 
-    return message
+    return output
 
 
 # ============================================================
@@ -308,38 +317,37 @@ top_symbols = [
 ]
 
 cols = st.columns(5)
-clicked_symbol = None
+selected = None
 
 for i, sym in enumerate(top_symbols):
     if cols[i % 5].button(sym):
-        clicked_symbol = sym
+        selected = sym
 
-if clicked_symbol:
-    st.session_state["selected_symbol"] = clicked_symbol
+if selected:
+    st.session_state["symbol"] = selected
 
-symbol = st.session_state.get("selected_symbol", "NIFTY")
+symbol = st.session_state.get("symbol", "NIFTY")
 st.success(f"Analyzing: {symbol}")
 
 st.markdown("---")
 
 # ============================================================
-# RUN ANALYSIS
+# RUN ANALYSIS OUTPUT
 # ============================================================
-result_msg = analyze(symbol)
+result = analyze(symbol)
 
-if result_msg is None:
+if result is None:
     st.error("Error fetching data. Try again.")
 else:
-    st.code(result_msg, language=None)
+    st.code(result, language=None)
 
-# Manual Refresh
+# manual refresh
 if st.button("🔄 Manual Refresh"):
     st.experimental_rerun()
 
-# Reset Δ values
+# reset delta
 if st.button("🧹 Reset Δ History"):
-    keys = ["prev_df", "prev_spot", "prev_ce_total", "prev_pe_total", "prev_ce_vol", "prev_pe_vol"]
-    for k in keys:
+    for k in ["prev_df", "prev_spot", "prev_ce_total", "prev_pe_total", "prev_ce_vol", "prev_pe_vol"]:
         if k in st.session_state:
             del st.session_state[k]
     st.experimental_rerun()
