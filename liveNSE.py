@@ -12,6 +12,8 @@ import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime
+import math
+from datetime import datetime as dt
 
 # ---------------------------
 # 🔥 NEW — Fill this to enable Telegram sending
@@ -378,3 +380,194 @@ if st.button("Reset previous snapshot (clear Δ calculations)"):
         if k in st.session_state:
             del st.session_state[k]
     st.experimental_rerun()
+
+    
+
+##12901291029102910291092102901920192019201920
+
+
+# ---------------------------
+# NEW FEATURE: Strike Greeks / Time-decay viewer
+# Paste this block into your script (after the main Streamlit UI / before Reset button)
+# ---------------------------
+import math
+from datetime import datetime as dt
+
+def _std_norm_cdf(x):
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+def _std_norm_pdf(x):
+    return math.exp(-0.5 * x * x) / math.sqrt(2 * math.pi)
+
+def bs_greeks(S, K, r, sigma, t, option_type="call"):
+    """
+    Return dict with Delta, Gamma, Vega, Theta (per year). t in years, sigma as decimal (e.g. 0.45).
+    If sigma is None or t<=0, returns None for greeks.
+    """
+    try:
+        S = float(S); K = float(K); r = float(r); t = float(t)
+    except:
+        return {"Delta": None, "Gamma": None, "Vega": None, "Theta": None}
+
+    if sigma is None or sigma <= 0 or t <= 0:
+        return {"Delta": None, "Gamma": None, "Vega": None, "Theta": None}
+
+    sigma = float(sigma)
+    d1 = (math.log(S / K) + (r + 0.5 * sigma * sigma) * t) / (sigma * math.sqrt(t))
+    d2 = d1 - sigma * math.sqrt(t)
+    pdf_d1 = _std_norm_pdf(d1)
+    cdf_d1 = _std_norm_cdf(d1)
+    cdf_d2 = _std_norm_cdf(d2)
+    nd1 = pdf_d1
+
+    # Delta
+    if option_type.lower().startswith("c"):
+        delta = cdf_d1
+        theta = -(S * nd1 * sigma) / (2 * math.sqrt(t)) - r * K * math.exp(-r * t) * cdf_d2
+    else:
+        delta = cdf_d1 - 1
+        theta = -(S * nd1 * sigma) / (2 * math.sqrt(t)) + r * K * math.exp(-r * t) * (1 - cdf_d2)
+
+    # Gamma
+    gamma = nd1 / (S * sigma * math.sqrt(t))
+    # Vega (per 1 vol point, i.e. sigma expressed as decimal, vega returned as price change for +1 vol unit)
+    vega = S * nd1 * math.sqrt(t)
+    # Theta returned per year. We'll convert to per day later when presenting.
+    return {"Delta": delta, "Gamma": gamma, "Vega": vega, "Theta": theta}
+
+# UI for strike greeks
+st.markdown("## ⚙️ Strike Greeks / Time-decay viewer")
+strike_input = st.text_input("Enter strike (e.g. 26200) to inspect ±2 strikes", value="26200").strip()
+show_strike_btn = st.button("Show Strike Greeks")
+
+if show_strike_btn:
+    # reuse symbol text input already present in your app
+    symbol_for_strike = symbol if symbol else "NIFTY"
+
+    df, raw = get_option_chain(symbol_for_strike)
+    if df is None or df.empty or raw is None:
+        st.error("Option chain not available. Run analysis or check NSE fetch.")
+    else:
+        # find available strikes list (unique)
+        strikes_list = sorted(df["Strike"].astype(int).unique().tolist())
+        try:
+            target = int(float(strike_input))
+        except:
+            st.error("Please enter a valid numeric strike (e.g. 26200).")
+            target = None
+
+        if target is not None:
+            # find nearest index
+            # If target not in list, find position where it would be inserted
+            import bisect
+            pos = bisect.bisect_left(strikes_list, target)
+            # Build window of 5 strikes (prefer centered around pos)
+            left = max(0, pos - 2)
+            right = min(len(strikes_list), left + 5)
+            # adjust left if we're at end
+            left = max(0, right - 5)
+            chosen = strikes_list[left:right]
+
+            # get spot & expiry time
+            spot = fetch_spot_from_nse(raw) or df["Strike"].iloc[len(df)//2]
+            # expiry extraction: use first expiry available
+            expiry_dates = raw.get("records", {}).get("expiryDates", []) if isinstance(raw, dict) else []
+            expiry_date = None
+            if expiry_dates:
+                try:
+                    expiry_date = dt.strptime(expiry_dates[0], "%d-%b-%Y")
+                except:
+                    try:
+                        expiry_date = dt.fromisoformat(expiry_dates[0])
+                    except:
+                        expiry_date = None
+
+            t_years = None
+            if expiry_date:
+                days = (expiry_date.date() - dt.now().date()).days
+                if days <= 0:
+                    t_years = 0.0001
+                else:
+                    t_years = days / 365.0
+            else:
+                # fallback: approximate 7 days
+                t_years = 7/365.0
+
+            # risk-free rate (we use a default; you can change this)
+            r = 0.06
+
+            rows = []
+            for K in chosen:
+                # find the row(s) for this strike in original raw records to read IV and last price
+                # raw 'records' -> 'data' contains CE/PE objects; search for matching strike
+                iv_ce = None; iv_pe = None
+                last_ce = None; last_pe = None
+
+                # iterate records to find exact strike's CE and PE (works even if multiple expiries present)
+                recs = raw.get("records", {}).get("data", [])
+                for rc in recs:
+                    if int(rc.get("strikePrice", 0)) == K:
+                        ce = rc.get("CE")
+                        pe = rc.get("PE")
+                        if ce:
+                            # impliedVolatility in NSE JSON is typically as percentage (e.g. 12.34)
+                            iv_val = ce.get("impliedVolatility", None)
+                            try:
+                                iv_ce = float(iv_val) / 100.0 if iv_val not in (None, "") else None
+                            except:
+                                iv_ce = None
+                            last_ce = ce.get("lastPrice", None)
+                        if pe:
+                            iv_val2 = pe.get("impliedVolatility", None)
+                            try:
+                                iv_pe = float(iv_val2) / 100.0 if iv_val2 not in (None, "") else None
+                            except:
+                                iv_pe = None
+                            last_pe = pe.get("lastPrice", None)
+                        break
+
+                # compute greeks using IV if available; else leave as None
+                ce_g = bs_greeks(spot, K, r, iv_ce, t_years, option_type="call")
+                pe_g = bs_greeks(spot, K, r, iv_pe, t_years, option_type="put")
+
+                rows.append({
+                    "Strike": K,
+                    "CE_Last": last_ce,
+                    "CE_IV (%)": round(iv_ce*100,2) if iv_ce else "N/A",
+                    "CE_Delta": round(ce_g["Delta"],4) if ce_g["Delta"] is not None else "N/A",
+                    "CE_Gamma": round(ce_g["Gamma"],6) if ce_g["Gamma"] is not None else "N/A",
+                    "CE_Vega": round(ce_g["Vega"],2) if ce_g["Vega"] is not None else "N/A",
+                    "CE_Theta_per_day": round( (ce_g["Theta"] / 365.0), 4) if ce_g["Theta"] is not None else "N/A",
+                    "PE_Last": last_pe,
+                    "PE_IV (%)": round(iv_pe*100,2) if iv_pe else "N/A",
+                    "PE_Delta": round(pe_g["Delta"],4) if pe_g["Delta"] is not None else "N/A",
+                    "PE_Gamma": round(pe_g["Gamma"],6) if pe_g["Gamma"] is not None else "N/A",
+                    "PE_Vega": round(pe_g["Vega"],2) if pe_g["Vega"] is not None else "N/A",
+                    "PE_Theta_per_day": round( (pe_g["Theta"] / 365.0), 4) if pe_g["Theta"] is not None else "N/A",
+                })
+
+            # show a small header
+            st.markdown(f"**Symbol:** {symbol_for_strike} • **Spot:** {spot} • **Expiry (estimated):** {expiry_dates[0] if expiry_dates else 'N/A'} • **T (yrs):** {round(t_years,4)}")
+            df_view = pd.DataFrame(rows)
+            # present two tables side-by-side (CE left, PE right) for clarity
+            ce_cols = ["Strike", "CE_Last", "CE_IV (%)", "CE_Delta", "CE_Gamma", "CE_Vega", "CE_Theta_per_day"]
+            pe_cols = ["Strike", "PE_Last", "PE_IV (%)", "PE_Delta", "PE_Gamma", "PE_Vega", "PE_Theta_per_day"]
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("### 🔵 CE (Calls)")
+                st.dataframe(df_view[ce_cols].rename(columns={
+                    "CE_Last":"LastPrice","CE_IV (%)":"IV(%)","CE_Delta":"Delta","CE_Gamma":"Gamma","CE_Vega":"Vega","CE_Theta_per_day":"Theta/day"
+                }), height=250)
+            with c2:
+                st.markdown("### 🔴 PE (Puts)")
+                st.dataframe(df_view[pe_cols].rename(columns={
+                    "PE_Last":"LastPrice","PE_IV (%)":"IV(%)","PE_Delta":"Delta","PE_Gamma":"Gamma","PE_Vega":"Vega","PE_Theta_per_day":"Theta/day"
+                }), height=250)
+
+            # quick suggestion row for spreads (simple heuristic)
+            st.markdown("**Quick spread hints (heuristic):**")
+            st.markdown("- Bull spread: consider buying lower-strike CE and selling higher-strike CE where Theta/day is lower for the bought leg and higher for the sold leg (depends on cost).")
+            st.markdown("- Bear spread: consider buying higher-strike PE and selling lower-strike PE with similar Theta/Delta considerations.")
+            st.info("This is a helper tool — combine greeks, IV and personal risk to pick strikes for actual trades.")
+
