@@ -9,7 +9,7 @@ from typing import Optional, Dict, Any, List
 # -----------------------
 # CONFIG — replace these
 # -----------------------
-DHAN_ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJwX2lwIjoiIiwic19pcCI6IiIsImlzcyI6ImRoYW4iLCJwYXJ0bmVySWQiOiIiLCJleHAiOjE3NjcxMTI2MjEsImlhdCI6MTc2NzAyNjIyMSwidG9rZW5Db25zdW1lclR5cGUiOiJTRUxGIiwid2ViaG9va1VybCI6Imh0dHBzOi8vd3d3Lm5zZWluZGlhLmNvbS8iLCJkaGFuQ2xpZW50SWQiOiIxMTA4MTg5Mjc4In0.-w3_eGlGt3agmRAlMl497FxVMXzbNDwEFcCCAs6YIiTwmFoQU5BlSChaN_rXly22mFDp4vYNTrNPlZwn_gcETg"   # put your JWT here
+DHAN_ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJwX2lwIjoiIiwic19pcCI6IiIsImlzcyI6ImRoYW4iLCJwYXJ0bmVySWQiOiIiLCJleHAiOjE3NjcyNDA1NTUsImlhdCI6MTc2NzE1NDE1NSwidG9rZW5Db25zdW1lclR5cGUiOiJTRUxGIiwid2ViaG9va1VybCI6Imh0dHBzOi8vd3d3Lm5zZWluZGlhLmNvbS8iLCJkaGFuQ2xpZW50SWQiOiIxMTA4MTg5Mjc4In0.AqDQOnbgCEnD2pi-P1DE1yjLHBOWvVWJj0Lxudru2Wx-GPcyBd22rIYrYxQI2blZusdCvgUhsRLmwRmCgAOhTA"   # put your JWT here
 DHAN_CLIENT_ID = "1108189278"             # your client id / app name
 TELEGRAM_BOT_TOKEN = "8243416633:AAFjISDBXvhqGsM8xvOkWOeQ4eEmhMPlkNU"
 TELEGRAM_CHAT_ID = "567677761"
