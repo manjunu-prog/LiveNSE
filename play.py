@@ -1,14 +1,14 @@
 import streamlit as st
 import requests
 import pandas as pd
-import credentials
 import time
 
 # ──────────────────────────────────────────────
 # CONFIG
 # ──────────────────────────────────────────────
-DHAN_ACCESS_TOKEN = credentials.DHAN_ACCESS_TOKEN
-DHAN_CLIENT_ID    = credentials.DHAN_CLIENT_ID
+# ADD YOUR CREDENTIALS DIRECTLY HERE:
+DHAN_ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJwX2lwIjoiIiwic19pcCI6IiIsImlzcyI6ImRoYW4iLCJwYXJ0bmVySWQiOiIiLCJleHAiOjE3NzY0NTExMjIsImlhdCI6MTc3NjM2NDcyMiwidG9rZW5Db25zdW1lclR5cGUiOiJTRUxGIiwid2ViaG9va1VybCI6Imh0dHBzOi8vd2ViLmRoYW4uY28vaW5kZXgvcHJvZmlsZSIsImRoYW5DbGllbnRJZCI6IjExMDgwNjYwOTQifQ.gV5EAgoVGSxuim4Sk9j4y1JA2dJol_BXr8F_ROLlEiDb9gyV3EDQM50EVLra1BZVuEcJQ54NO3_qT6-q41SUQg"
+DHAN_CLIENT_ID    = "1108066094"
 
 API_BASE        = "https://api.dhan.co/v2"
 OPTIONCHAIN_URL = f"{API_BASE}/optionchain"
