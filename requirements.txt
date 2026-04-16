@@ -2,5 +2,4 @@ matplotlib
 streamlit
 requests
 pandas
-plotly
 time
