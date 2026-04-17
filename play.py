@@ -27,12 +27,15 @@ UNDERLYING_MAP = {
 def send_telegram_alert(index_name, ltp, atm, expiry, pcr, df):
     try:
         # ── CALL side ──
-        max_c_oi_row  = df.loc[df["_coi"].idxmax()]
-        max_c_vol_row = df.loc[df["_cv"].idxmax()]
+        max_c_oi_chg_row = df.loc[df["_cd"].idxmax()]
+        max_c_vol_row    = df.loc[df["_cv"].idxmax()]
 
         # ── PUT side ──
-        max_p_oi_row  = df.loc[df["_poi"].idxmax()]
-        max_p_vol_row = df.loc[df["_pv"].idxmax()]
+        max_p_oi_chg_row = df.loc[df["_pd"].idxmax()]
+        max_p_vol_row    = df.loc[df["_pv"].idxmax()]
+
+        c_arrow = "▲" if max_c_oi_chg_row["_cd"] >= 0 else "▼"
+        p_arrow = "▲" if max_p_oi_chg_row["_pd"] >= 0 else "▼"
 
         msg = (
             f"📊 *{index_name} Option Chain Alert*\n"
@@ -41,12 +44,12 @@ def send_telegram_alert(index_name, ltp, atm, expiry, pcr, df):
             f"💰 LTP: `{ltp:,.0f}` | ATM: `{int(atm)}` | PCR: `{pcr:.2f}`\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"📈 *CALL (CE)*\n"
-            f"  🔹 Highest OI Strike : `{int(max_c_oi_row['STRIKE'])}` — OI: `{max_c_oi_row['_coi']/1e5:.2f}L` | LTP: `{max_c_oi_row['C LTP']}`\n"
-            f"  🔹 Highest Vol Strike : `{int(max_c_vol_row['STRIKE'])}` — Vol: `{max_c_vol_row['_cv']/1e5:.2f}L` | LTP: `{max_c_vol_row['C LTP']}`\n"
+            f"  🔹 Highest OI Chg : `{int(max_c_oi_chg_row['STRIKE'])}` — ΔOI: `{max_c_oi_chg_row['_cd']/1e5:.2f}L {c_arrow}` | LTP: `{max_c_oi_chg_row['C LTP']}`\n"
+            f"  🔹 Highest Vol    : `{int(max_c_vol_row['STRIKE'])}` — Vol: `{max_c_vol_row['_cv']/1e5:.2f}L` | LTP: `{max_c_vol_row['C LTP']}`\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"📉 *PUT (PE)*\n"
-            f"  🔸 Highest OI Strike : `{int(max_p_oi_row['STRIKE'])}` — OI: `{max_p_oi_row['_poi']/1e5:.2f}L` | LTP: `{max_p_oi_row['P LTP']}`\n"
-            f"  🔸 Highest Vol Strike : `{int(max_p_vol_row['STRIKE'])}` — Vol: `{max_p_vol_row['_pv']/1e5:.2f}L` | LTP: `{max_p_vol_row['P LTP']}`\n"
+            f"  🔸 Highest OI Chg : `{int(max_p_oi_chg_row['STRIKE'])}` — ΔOI: `{max_p_oi_chg_row['_pd']/1e5:.2f}L {p_arrow}` | LTP: `{max_p_oi_chg_row['P LTP']}`\n"
+            f"  🔸 Highest Vol    : `{int(max_p_vol_row['STRIKE'])}` — Vol: `{max_p_vol_row['_pv']/1e5:.2f}L` | LTP: `{max_p_vol_row['P LTP']}`\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"_Auto-alert on every page refresh_"
         )
