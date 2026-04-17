@@ -6,9 +6,11 @@ import time
 # ──────────────────────────────────────────────
 # CONFIG
 # ──────────────────────────────────────────────
-# ADD YOUR CREDENTIALS DIRECTLY HERE:
 DHAN_ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJwX2lwIjoiIiwic19pcCI6IiIsImlzcyI6ImRoYW4iLCJwYXJ0bmVySWQiOiIiLCJleHAiOjE3NzY0NTExMjIsImlhdCI6MTc3NjM2NDcyMiwidG9rZW5Db25zdW1lclR5cGUiOiJTRUxGIiwid2ViaG9va1VybCI6Imh0dHBzOi8vd2ViLmRoYW4uY28vaW5kZXgvcHJvZmlsZSIsImRoYW5DbGllbnRJZCI6IjExMDgwNjYwOTQifQ.gV5EAgoVGSxuim4Sk9j4y1JA2dJol_BXr8F_ROLlEiDb9gyV3EDQM50EVLra1BZVuEcJQ54NO3_qT6-q41SUQg"
 DHAN_CLIENT_ID    = "1108066094"
+
+TELEGRAM_TOKEN   = "8243416633:AAFjISDBXvhqGsM8xvOkWOeQ4eEmhMPlkNU"
+TELEGRAM_CHAT_ID = "567677761"
 
 API_BASE        = "https://api.dhan.co/v2"
 OPTIONCHAIN_URL = f"{API_BASE}/optionchain"
@@ -18,6 +20,44 @@ UNDERLYING_MAP = {
     "NIFTY":  {"Scrip": 13, "Segments": ["IDX_I", "NSE_FNO"], "step": 50},
     "SENSEX": {"Scrip": 1,  "Segments": ["BSE_FNO", "IDX_I"], "step": 100},
 }
+
+# ──────────────────────────────────────────────
+# TELEGRAM ALERT
+# ──────────────────────────────────────────────
+def send_telegram_alert(index_name, ltp, atm, expiry, pcr, df):
+    try:
+        # ── CALL side ──
+        max_c_oi_row  = df.loc[df["_coi"].idxmax()]
+        max_c_vol_row = df.loc[df["_cv"].idxmax()]
+
+        # ── PUT side ──
+        max_p_oi_row  = df.loc[df["_poi"].idxmax()]
+        max_p_vol_row = df.loc[df["_pv"].idxmax()]
+
+        msg = (
+            f"📊 *{index_name} Option Chain Alert*\n"
+            f"🕐 {time.strftime('%d-%b %H:%M')} | Expiry: {expiry}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"💰 LTP: `{ltp:,.0f}` | ATM: `{int(atm)}` | PCR: `{pcr:.2f}`\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📈 *CALL (CE)*\n"
+            f"  🔹 Highest OI Strike : `{int(max_c_oi_row['STRIKE'])}` — OI: `{max_c_oi_row['_coi']/1e5:.2f}L` | LTP: `{max_c_oi_row['C LTP']}`\n"
+            f"  🔹 Highest Vol Strike : `{int(max_c_vol_row['STRIKE'])}` — Vol: `{max_c_vol_row['_cv']/1e5:.2f}L` | LTP: `{max_c_vol_row['C LTP']}`\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📉 *PUT (PE)*\n"
+            f"  🔸 Highest OI Strike : `{int(max_p_oi_row['STRIKE'])}` — OI: `{max_p_oi_row['_poi']/1e5:.2f}L` | LTP: `{max_p_oi_row['P LTP']}`\n"
+            f"  🔸 Highest Vol Strike : `{int(max_p_vol_row['STRIKE'])}` — Vol: `{max_p_vol_row['_pv']/1e5:.2f}L` | LTP: `{max_p_vol_row['P LTP']}`\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"_Auto-alert on every page refresh_"
+        )
+
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"},
+            timeout=5
+        )
+    except Exception as e:
+        pass  # Silent fail — never break the dashboard
 
 # ──────────────────────────────────────────────
 # CSS - CLEAN DARK TERMINAL
@@ -158,6 +198,14 @@ if found_expiry:
         total_c_oi = df["_coi"].sum()
         total_p_oi = df["_poi"].sum()
         pcr = total_p_oi / total_c_oi if total_c_oi else 0
+
+        # ──────────────────────────────────────────────
+        # TELEGRAM ALERT — fires on every page load/refresh
+        # ──────────────────────────────────────────────
+        send_telegram_alert(
+            st.session_state.index_choice, ltp, atm,
+            found_expiry, pcr, df
+        )
 
         # ──────────────────────────────────────────────
         # TOP PANEL (METRICS)
