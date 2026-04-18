@@ -129,7 +129,7 @@ if "index_choice" not in st.session_state:
     st.session_state.index_choice = "NIFTY"
 
 # 3 Minute Refresh (180 Seconds)
-refresh_interval = 180
+refresh_interval = 600
 if "last_refresh" not in st.session_state: 
     st.session_state.last_refresh = time.time()
 
