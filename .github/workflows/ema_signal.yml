@@ -1,0 +1,27 @@
+name: Nifty EMA Signal Alert
+
+on:
+  schedule:
+    # Every 3 minutes, Mon–Fri, 9:15 AM to 3:30 PM IST (UTC 3:45 to 10:00)
+    # GitHub cron minimum is 1 min. */3 = every 3 mins.
+    - cron: '*/3 3-10 * * 1-5'
+  workflow_dispatch:  # manual trigger from GitHub UI anytime
+
+jobs:
+  ema-signal:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests pytz
+
+      - name: Run EMA signal script
+        run: python ema_signal.py
