@@ -2,9 +2,9 @@ name: Option Chain Telegram Alert
 
 on:
   schedule:
-    # Runs every 10 minutes, Mon–Fri (9:00 AM to 4:00 PM IST = UTC 3:30 to 10:30)
-    - cron: '*/10 3-10 * * 1-5'
-  workflow_dispatch:  # allows manual trigger from GitHub UI anytime
+    # 3:30 to 10:30 UTC corresponds to 09:00 AM to 04:00 PM IST
+    - cron: '*/15 3-10 * * 1-5'
+  workflow_dispatch:
 
 jobs:
   send-alert:
