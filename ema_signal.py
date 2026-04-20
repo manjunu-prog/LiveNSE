@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 # ──────────────────────────────────────────────
 DHAN_ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJwX2lwIjoiIiwic19pcCI6IiIsImlzcyI6ImRoYW4iLCJwYXJ0bmVySWQiOiIiLCJleHAiOjE3NzY3OTQxOTIsImlhdCI6MTc3NjcwNzc5MiwidG9rZW5Db25zdW1lclR5cGUiOiJTRUxGIiwid2ViaG9va1VybCI6Imh0dHBzOi8vd2ViLmRoYW4uY28vaW5kZXgvcHJvZmlsZSIsImRoYW5DbGllbnRJZCI6IjExMDgwNjYwOTQifQ.uobrfk0X5G09WakP3KT__1z4oByp45_xh8ledtbZxUptgNASdwaPzsoWzriTC5bajVsCu3l3SHHOAUX6zZdmWg"
 DHAN_CLIENT_ID   = "1108066094"
-TELEGRAM_TOKEN   = "8243416633:AAFjISDBXvhqGsM8xvOkWOeQ4eEmhMPlkNU"
+TELEGRAM_TOKEN   = "8571189424:AAGgfMZ1ET9s-z3bRqJnoJ_gHuL0JFe4x8k"
 TELEGRAM_CHAT_ID = "567677761"
 INTRADAY_URL     = "https://api.dhan.co/v2/charts/intraday"
 STATE_FILE       = "ema_state.json"   # saved in repo to persist between runs
