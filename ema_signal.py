@@ -1,18 +1,19 @@
 import requests
-import time
+import json
+import os
 import pytz
 from datetime import datetime, timedelta
 
 # ──────────────────────────────────────────────
 # CONFIG
 # ──────────────────────────────────────────────
-DHAN_ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJwX2lwIjoiIiwic19pcCI6IiIsImlzcyI6ImRoYW4iLCJwYXJ0bmVySWQiOiIiLCJleHAiOjE3NzY3OTQxOTIsImlhdCI6MTc3NjcwNzc5MiwidG9rZW5Db25zdW1lclR5cGUiOiJTRUxGIiwid2ViaG9va1VybCI6Imh0dHBzOi8vd2ViLmRoYW4uY28vaW5kZXgvcHJvZmlsZSIsImRoYW5DbGllbnRJZCI6IjExMDgwNjYwOTQifQ.uobrfk0X5G09WakP3KT__1z4oByp45_xh8ledtbZxUptgNASdwaPzsoWzriTC5bajVsCu3l3SHHOAUX6zZdmWg"
-DHAN_CLIENT_ID    = "1108066094"
-TELEGRAM_TOKEN    = "8243416633:AAFjISDBXvhqGsM8xvOkWOeQ4eEmhMPlkNU"
-TELEGRAM_CHAT_ID  = "567677761"
-
-INTRADAY_URL = "https://api.dhan.co/v2/charts/intraday"
-EMA_PERIODS  = [4, 8, 14, 28]
+DHAN_ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJwX2lwIjoiIiwic19pcCI6IiIsImlzcyI6ImRoYW4iLCJwYXJ0bmVySWQiOiIiLCJleHAiOjE3NzY0NTExMjIsImlhdCI6MTc3NjM2NDcyMiwidG9rZW5Db25zdW1lclR5cGUiOiJTRUxGIiwid2ViaG9va1VybCI6Imh0dHBzOi8vd2ViLmRoYW4uY28vaW5kZXgvcHJvZmlsZSIsImRoYW5DbGllbnRJZCI6IjExMDgwNjYwOTQifQ.gV5EAgoVGSxuim4Sk9j4y1JA2dJol_BXr8F_ROLlEiDb9gyV3EDQM50EVLra1BZVuEcJQ54NO3_qT6-q41SUQg"
+DHAN_CLIENT_ID   = "1108066094"
+TELEGRAM_TOKEN   = "8243416633:AAFjISDBXvhqGsM8xvOkWOeQ4eEmhMPlkNU"
+TELEGRAM_CHAT_ID = "567677761"
+INTRADAY_URL     = "https://api.dhan.co/v2/charts/intraday"
+STATE_FILE       = "ema_state.json"   # saved in repo to persist between runs
+EMA_PERIODS      = [4, 8, 14, 28]
 
 # ──────────────────────────────────────────────
 # HELPERS
@@ -20,11 +21,20 @@ EMA_PERIODS  = [4, 8, 14, 28]
 def _headers():
     return {
         "access-token": DHAN_ACCESS_TOKEN,
-        "client-id": DHAN_CLIENT_ID,
+        "client-id":    DHAN_CLIENT_ID,
         "Content-Type": "application/json"
     }
 
-def send_telegram(msg):
+def send_telegram(msg, repeat=False):
+    """Send once, or repeat every 10s for 2 mins if repeat=True."""
+    send_once(msg)
+    if repeat:
+        import time
+        for i in range(1, 12):  # 11 more times = 12 total over 2 mins
+            time.sleep(10)
+            send_once(msg)
+
+def send_once(msg):
     try:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
@@ -44,7 +54,24 @@ def calc_ema(closes, period):
     return round(ema, 2)
 
 # ──────────────────────────────────────────────
-# MARKET HOURS CHECK (IST)
+# STATE — read/write last signal to file
+# ──────────────────────────────────────────────
+def load_state():
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"last_signal": "NEUTRAL", "last_date": ""}
+
+def save_state(signal, date_str):
+    with open(STATE_FILE, "w") as f:
+        json.dump({"last_signal": signal, "last_date": date_str}, f)
+    print(f"State saved: {signal} on {date_str}")
+
+# ──────────────────────────────────────────────
+# MARKET HOURS CHECK
 # ──────────────────────────────────────────────
 def is_market_open():
     ist = pytz.timezone("Asia/Kolkata")
@@ -71,7 +98,7 @@ def fetch_candles_range(from_dt, to_dt):
     }
     r    = requests.post(INTRADAY_URL, json=payload, headers=_headers(), timeout=15)
     data = r.json()
-    return data.get("close", []), data.get("timestamp", [])
+    return data.get("close", [])
 
 def get_prev_trading_day(now):
     day = now - timedelta(days=1)
@@ -79,48 +106,43 @@ def get_prev_trading_day(now):
         day -= timedelta(days=1)
     return day
 
-def fetch_candles():
-    ist = pytz.timezone("Asia/Kolkata")
-    now = datetime.now(ist)
+def fetch_all_closes():
+    ist  = pytz.timezone("Asia/Kolkata")
+    now  = datetime.now(ist)
 
-    # ── Previous day: full session as EMA warmup ──
+    # Prev day warmup
     prev      = get_prev_trading_day(now)
     prev_from = prev.replace(hour=9,  minute=15, second=0, microsecond=0)
     prev_to   = prev.replace(hour=15, minute=30, second=0, microsecond=0)
-    prev_closes, _ = fetch_candles_range(prev_from, prev_to)
-    print(f"Warmup candles (prev day): {len(prev_closes)}")
+    prev_closes = fetch_candles_range(prev_from, prev_to)
+    print(f"Warmup candles: {len(prev_closes)}")
 
-    # ── Today: 9:15 to now ──
-    today_from = now.replace(hour=9, minute=15, second=0, microsecond=0)
-    today_closes, today_ts = fetch_candles_range(today_from, now)
-    print(f"Today candles: {len(today_closes)} | Latest: {today_closes[-1] if today_closes else 'N/A'}")
+    # Today
+    today_from   = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    today_closes = fetch_candles_range(today_from, now)
+    print(f"Today candles : {len(today_closes)} | Latest: {today_closes[-1] if today_closes else 'N/A'}")
 
     if not today_closes:
-        print("No today candle data.")
-        return None, None
+        return None
 
-    # ── Combine: EMA computed on all, signal from today's last close ──
-    all_closes = list(prev_closes) + list(today_closes)
-    print(f"Total candles for EMA calculation: {len(all_closes)}")
-    return all_closes, today_closes[-1]   # return combined closes + today's last close
+    return list(prev_closes) + list(today_closes), today_closes[-1]
 
 # ──────────────────────────────────────────────
-# SIGNAL LOGIC
+# SIGNAL
 # ──────────────────────────────────────────────
-def get_signal(closes):
-    if len(closes) < max(EMA_PERIODS):
-        print(f"Not enough candles ({len(closes)}) — need {max(EMA_PERIODS)}+.")
+def get_signal(all_closes):
+    if len(all_closes) < max(EMA_PERIODS):
+        print("Not enough candles for EMA calculation.")
         return None, {}
 
-    emas         = {p: calc_ema(closes, p) for p in EMA_PERIODS}
-    latest_close = closes[-1]
+    emas  = {p: calc_ema(all_closes, p) for p in EMA_PERIODS}
+    close = all_closes[-1]
+    print(f"Close: {close} | EMA4: {emas[4]} | EMA8: {emas[8]} | EMA14: {emas[14]} | EMA28: {emas[28]}")
 
-    print(f"Close: {latest_close} | EMA4: {emas[4]} | EMA8: {emas[8]} | EMA14: {emas[14]} | EMA28: {emas[28]}")
-
-    if all(latest_close > emas[p] for p in EMA_PERIODS):
-        return "CE", emas
-    if all(latest_close < emas[p] for p in EMA_PERIODS):
-        return "PE", emas
+    if all(close > emas[p] for p in EMA_PERIODS):
+        return "BULLISH", emas
+    if all(close < emas[p] for p in EMA_PERIODS):
+        return "BEARISH", emas
     return "NEUTRAL", emas
 
 # ──────────────────────────────────────────────
@@ -133,50 +155,65 @@ if __name__ == "__main__":
     else:
         print(f"Market open — {reason}")
 
-        all_closes, latest_close = fetch_candles()
-        if all_closes is None:
-            print("Could not fetch candle data.")
+        result = fetch_all_closes()
+        if result is None:
+            print("No candle data.")
         else:
-            signal, emas = get_signal(all_closes)
-            ist_time     = datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%d-%b %H:%M")
+            all_closes, latest_close = result
+            signal, emas             = get_signal(all_closes)
 
             if signal is None:
-                print("Not enough candles yet.")
-
-            elif signal == "CE":
-                msg = (
-                    f"🟢 *NIFTY — CE SIGNAL* 🟢\n"
-                    f"🕐 {ist_time} | 3-Min EMA Scan\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"📈 Price `{latest_close}` is *ABOVE all 4 EMAs*\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"  EMA  4 : `{emas[4]}`\n"
-                    f"  EMA  8 : `{emas[8]}`\n"
-                    f"  EMA 14 : `{emas[14]}`\n"
-                    f"  EMA 28 : `{emas[28]}`\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"✅ *Bias: BUY CE side*"
-                )
-                send_telegram(msg)
-                print("CE signal sent to Telegram.")
-
-            elif signal == "PE":
-                msg = (
-                    f"🔴 *NIFTY — PE SIGNAL* 🔴\n"
-                    f"🕐 {ist_time} | 3-Min EMA Scan\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"📉 Price `{latest_close}` is *BELOW all 4 EMAs*\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"  EMA  4 : `{emas[4]}`\n"
-                    f"  EMA  8 : `{emas[8]}`\n"
-                    f"  EMA 14 : `{emas[14]}`\n"
-                    f"  EMA 28 : `{emas[28]}`\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"✅ *Bias: BUY PE side*"
-                )
-                send_telegram(msg)
-                print("PE signal sent to Telegram.")
-
+                print("Signal: None — not enough data.")
             else:
-                print(f"NEUTRAL — no clean signal.")
-                print(f"EMA4={emas[4]} | EMA8={emas[8]} | EMA14={emas[14]} | EMA28={emas[28]}")
+                # Load previous state
+                state       = load_state()
+                prev_signal = state.get("last_signal", "NEUTRAL")
+                ist_time    = datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%d-%b %H:%M")
+                today_str   = datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%Y-%m-%d")
+
+                print(f"Signal: {signal} | Previous: {prev_signal}")
+
+                # ── Only alert if signal CHANGED ──
+                if signal == prev_signal:
+                    print(f"No change in signal ({signal}) — no alert sent.")
+
+                elif signal == "BULLISH":
+                    msg = (
+                        f"🟢 *NIFTY — BULLISH SIGNAL* 🟢\n"
+                        f"🕐 {ist_time} | 3-Min EMA Crossover\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"📈 Price `{latest_close}` is *ABOVE all 4 EMAs*\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"  EMA  4 : `{emas[4]}`\n"
+                        f"  EMA  8 : `{emas[8]}`\n"
+                        f"  EMA 14 : `{emas[14]}`\n"
+                        f"  EMA 28 : `{emas[28]}`\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"✅ *Bias: BUY CE side*"
+                    )
+                    send_telegram(msg, repeat=True)
+                    save_state("BULLISH", today_str)
+                    print("Bullish alert sent ✅")
+
+                elif signal == "BEARISH":
+                    msg = (
+                        f"🔴 *NIFTY — BEARISH SIGNAL* 🔴\n"
+                        f"🕐 {ist_time} | 3-Min EMA Crossover\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"📉 Price `{latest_close}` is *BELOW all 4 EMAs*\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"  EMA  4 : `{emas[4]}`\n"
+                        f"  EMA  8 : `{emas[8]}`\n"
+                        f"  EMA 14 : `{emas[14]}`\n"
+                        f"  EMA 28 : `{emas[28]}`\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"✅ *Bias: BUY PE side*"
+                    )
+                    send_telegram(msg, repeat=True)
+                    save_state("BEARISH", today_str)
+                    print("Bearish alert sent ✅")
+
+                else:
+                    # Signal went NEUTRAL — just update state, no alert
+                    save_state("NEUTRAL", today_str)
+                    print("Signal is NEUTRAL — state updated, no alert sent.")
