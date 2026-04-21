@@ -20,7 +20,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests pytz Pillow
+        run: pip install -r requirements.txt
 
       - name: Run alert script
         run: python alert.py

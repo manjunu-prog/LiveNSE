@@ -9,8 +9,6 @@ on:
 jobs:
   ema-signal:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  # Crucial: Grants permission to push updates back to your repo
 
     steps:
       - name: Checkout repo
@@ -22,30 +20,15 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests pytz
+        run: pip install -r requirements.txt
 
       - name: Run EMA signal script
         run: python ema_signal.py
-
-      - name: Debug file location
-        run: |
-          echo "Listing files in current directory:"
-          ls -R
 
       - name: Save state back to repo
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Only attempt to commit if the file exists
-          if [ -f "ema_state.json" ]; then
-            git add ema_state.json
-            git diff --staged --quiet || git commit -m "update ema state [skip ci]"
-            git push
-          else
-            echo "ema_state.json not found in root. Checking subdirectories..."
-            # If the file is in a subfolder, add it correctly here
-            # Example: git add folder_name/ema_state.json
-            echo "If file is in a subfolder, update the git add command in ema_signal.yml"
-            exit 0
-          fi
+          git add ema_state.json
+          git diff --staged --quiet || git commit -m "update ema state [skip ci]"
+          git push
