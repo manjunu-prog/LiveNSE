@@ -6,7 +6,7 @@ import time
 # ──────────────────────────────────────────────
 # CONFIG
 # ──────────────────────────────────────────────
-DHAN_ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJwX2lwIjoiIiwic19pcCI6IiIsImlzcyI6ImRoYW4iLCJwYXJ0bmVySWQiOiIiLCJleHAiOjE3NzcwMDMwOTksImlhdCI6MTc3NjkxNjY5OSwidG9rZW5Db25zdW1lclR5cGUiOiJTRUxGIiwid2ViaG9va1VybCI6Imh0dHBzOi8vd2ViLmRoYW4uY28vaW5kZXgvcHJvZmlsZSIsImRoYW5DbGllbnRJZCI6IjExMDgwNjYwOTQifQ.rLGnvX8H3KD7NCg_5zOb5vhEUYSlcoJdrfA_ho52viDzVPyzM6u0n2bT12ghfRFiBmqr028rsl5ONFx2wQ1CBA"
+DHAN_ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJwX2lwIjoiIiwic19pcCI6IiIsImlzcyI6ImRoYW4iLCJwYXJ0bmVySWQiOiIiLCJleHAiOjE3NzcwODgxNTEsImlhdCI6MTc3NzAwMTc1MSwidG9rZW5Db25zdW1lclR5cGUiOiJTRUxGIiwid2ViaG9va1VybCI6Imh0dHBzOi8vd2ViLmRoYW4uY28vaW5kZXgvcHJvZmlsZSIsImRoYW5DbGllbnRJZCI6IjExMDgwNjYwOTQifQ.qTLtb_XAgp9S_YrJKLuanHOiDImeAUrhBtaF_kWwtYiTMuPzE-jXjMLpm28oHA0VJP1fr068_8OYigyuAxpqNg"
 DHAN_CLIENT_ID    = "1108066094"
 
 
