@@ -1,6 +1,8 @@
 streamlit
 pandas
 requests
-requests
 pytz
 Pillow
+numpy
+matplotlib
+openpyxl
