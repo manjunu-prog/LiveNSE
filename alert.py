@@ -10,8 +10,18 @@ from PIL import Image, ImageDraw, ImageFont
 # ──────────────────────────────────────────────
 DHAN_ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJwX2lwIjoiIiwic19pcCI6IiIsImlzcyI6ImRoYW4iLCJwYXJ0bmVySWQiOiIiLCJleHAiOjE3NzcyMTY0ODYsImlhdCI6MTc3NzEzMDA4NiwidG9rZW5Db25zdW1lclR5cGUiOiJTRUxGIiwid2ViaG9va1VybCI6Imh0dHBzOi8vd2ViLmRoYW4uY28vaW5kZXgvcHJvZmlsZSIsImRoYW5DbGllbnRJZCI6IjExMDgwNjYwOTQifQ._lSblFtH3Qgd-C7fr8rWR7Cv1xNZW0vsORGfnAmkmvHbbMpE8WWiFFW6zvKN4yd7HN7GIZYyRQANtJycX8PLzQ"
 DHAN_CLIENT_ID    = "1108066094"
-TELEGRAM_TOKEN    = "8723061773:AAFO3hff8SeLZl9WhX6ojmrYrG5vN8FZyrQ"
-TELEGRAM_CHAT_ID  = "653488319"
+# Shivu account
+TELEGRAM_TOKEN_1   = "8584181321:AAHBBTFlhGPs-mBgbRHXLkJME9FaqJh5ofE"
+TELEGRAM_CHAT_ID_1 = "653488319"
+
+# Manju account
+TELEGRAM_TOKEN_2   = "8243416633:AAFjISDBXvhqGsM8xvOkWOeQ4eEmhMPlkNU"
+TELEGRAM_CHAT_ID_2 = "567677761"
+
+TELEGRAM_ACCOUNTS = [
+    {"token": TELEGRAM_TOKEN_1, "chat_id": TELEGRAM_CHAT_ID_1, "name": "Shivu"},
+    {"token": TELEGRAM_TOKEN_2, "chat_id": TELEGRAM_CHAT_ID_2, "name": "Manju"},
+]
 
 API_BASE        = "https://api.dhan.co/v2"
 OPTIONCHAIN_URL = f"{API_BASE}/optionchain"
@@ -65,19 +75,29 @@ def fmt(val):
     return f"{val/1e5:.2f}L"
 
 def send_telegram_text(msg):
-    requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"},
-        timeout=10
-    )
+    for acc in TELEGRAM_ACCOUNTS:
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{acc['token']}/sendMessage",
+                json={"chat_id": acc["chat_id"], "text": msg, "parse_mode": "Markdown"},
+                timeout=10
+            )
+            print(f"  ✅ Text sent to {acc['name']}")
+        except Exception as e:
+            print(f"  ❌ Failed to send text to {acc['name']}: {e}")
 
 def send_telegram_image(img_bytes, caption=""):
-    requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
-        data={"chat_id": TELEGRAM_CHAT_ID, "caption": caption, "parse_mode": "Markdown"},
-        files={"photo": ("table.png", img_bytes, "image/png")},
-        timeout=15
-    )
+    for acc in TELEGRAM_ACCOUNTS:
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{acc['token']}/sendPhoto",
+                data={"chat_id": acc["chat_id"], "caption": caption, "parse_mode": "Markdown"},
+                files={"photo": ("table.png", img_bytes, "image/png")},
+                timeout=15
+            )
+            print(f"  ✅ Image sent to {acc['name']}")
+        except Exception as e:
+            print(f"  ❌ Failed to send image to {acc['name']}: {e}")
 
 # ──────────────────────────────────────────────
 # IMAGE TABLE GENERATOR
