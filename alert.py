@@ -211,6 +211,8 @@ def build_table_image(index_name, ltp, atm, expiry, pcr, rows,
     buf.seek(0)
     return buf.read()
 
+# ... (ALL YOUR IMPORTS & CONFIG — NO CHANGE)
+
 # ──────────────────────────────────────────────
 # FETCH & ALERT
 # ──────────────────────────────────────────────
@@ -269,7 +271,7 @@ def fetch_and_alert(index_name, cfg):
 
     rows = sorted(rows, key=lambda x: x["strike"], reverse=True)
 
-    # Step 4: Identify max values for highlighting
+    # Step 4: Identify max values for highlighting (no change)
     max_c_delta = max(r["c_delta"] for r in rows)
     max_p_delta = max(r["p_delta"] for r in rows)
     max_c_vol   = max(r["c_vol"]   for r in rows)
@@ -279,15 +281,54 @@ def fetch_and_alert(index_name, cfg):
     total_p_oi = sum(r["p_oi"] for r in rows)
     pcr        = total_p_oi / total_c_oi if total_c_oi else 0
 
-    # Step 5: Generate image and send
+    # Step 5: Generate image (NO CHANGE)
     img_bytes = build_table_image(
         index_name, ltp, atm, found_expiry, pcr, rows,
         max_c_delta, max_p_delta, max_c_vol, max_p_vol
     )
 
-    caption = f"📊 *{index_name}* | LTP: `{ltp:,.0f}` | ATM: `{int(atm)}` | PCR: `{pcr:.2f}`"
-    send_telegram_image(img_bytes, caption)
-    print(f"[{index_name}] Image alert sent ✅")
+    # ──────────────────────────────────────────────
+    # ✅ NEW: SMART TELEGRAM TEXT (OI SENTIMENT)
+    # ──────────────────────────────────────────────
+    msg_lines = []
+    msg_lines.append(f"📊 *{index_name}*  |  LTP: `{ltp:,.0f}`\n")
+
+    for r in rows:
+        strike = int(r["strike"])
+        c_delta = r["c_delta"]
+        p_delta = r["p_delta"]
+
+        # Sentiment logic
+        if c_delta > p_delta:
+            icon = "🔴"   # Bearish
+        elif p_delta > c_delta:
+            icon = "🟢"   # Bullish
+        else:
+            icon = "⚪"
+
+        # Strike formatting
+        if strike == atm:
+            strike_txt = f"{icon} {strike} ATM"
+        else:
+            diff = int((strike - atm) / cfg["step"])
+            sign = f"+{diff}" if diff > 0 else f"{diff}"
+            strike_txt = f"{icon} {strike} {sign}"
+
+        left  = f"{r['c_vol']:,}"
+        right = f"{r['p_vol']:,}"
+
+        line = f"`{left:<10}`  {strike_txt:^14}  `{right:>10}`"
+        msg_lines.append(line)
+
+    msg_lines.append(f"\nPCR: `{pcr:.2f}`")
+
+    final_msg = "\n".join(msg_lines)
+
+    # ✅ Send BOTH image + new text
+    send_telegram_image(img_bytes, caption="")   # keep image clean
+    send_telegram_text(final_msg)
+
+    print(f"[{index_name}] Image + Smart text alert sent ✅")
 
 # ──────────────────────────────────────────────
 # MARKET HOURS CHECK
