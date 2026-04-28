@@ -213,6 +213,113 @@ def build_table_image(index_name, ltp, atm, expiry, pcr, rows,
 
 # ... (ALL YOUR IMPORTS & CONFIG — NO CHANGE)
 
+
+def build_strikewise_text(index_name, ltp, atm, pcr, rows, step):
+    msg_lines = []
+    msg_lines.append(f"📊 *{index_name}* | LTP: `{ltp:,.0f}`\n")
+
+    for r in rows:
+        strike = int(r["strike"])
+        c_delta = r["c_delta"]
+        p_delta = r["p_delta"]
+
+        # sentiment
+        if c_delta > p_delta:
+            icon = "🔴"
+        elif p_delta > c_delta:
+            icon = "🟢"
+        else:
+            icon = "⚪"
+
+        # strike label
+        if strike == atm:
+            strike_txt = f"{icon} {strike} ATM"
+        else:
+            strike_txt = f"{icon} {strike}"
+
+        def short(v):
+            return f"{v/1e5:.1f}"
+
+        c_vol = short(r["c_vol"])
+        p_vol = short(r["p_vol"])
+        c_oi  = short(abs(c_delta))
+        p_oi  = short(abs(p_delta))
+
+        c_ltp = int(r["c_ltp"])
+        p_ltp = int(r["p_ltp"])
+
+        c_arrow = "▲" if c_delta >= 0 else "▼"
+        p_arrow = "▲" if p_delta >= 0 else "▼"
+
+        line = (
+            f"`{c_vol}/{c_oi}{c_arrow}/{c_ltp:<3}`  "
+            f"{strike_txt:^14}  "
+            f"`{p_ltp:>3}/{p_oi}{p_arrow}/{p_vol}`"
+        )
+
+        msg_lines.append(line)
+
+    msg_lines.append(f"\nPCR: `{pcr:.2f}`")
+
+    return "\n".join(msg_lines)
+
+def build_bar_image(index_name, ltp, atm, pcr, rows):
+    width  = 900
+    row_h  = 36
+    top_h  = 60
+    height = top_h + len(rows)*row_h + 40
+
+    img  = Image.new("RGB", (width, height), BG)
+    draw = ImageDraw.Draw(img)
+
+    font      = get_font(14)
+    font_bold = get_font(14, bold=True)
+
+    # Title
+    draw.rectangle([0, 0, width, top_h], fill=HEADER_BG)
+    draw.text((10, 10),
+              f"{index_name} | LTP: {ltp:,.0f} | ATM: {int(atm)} | PCR: {pcr:.2f}",
+              font=font_bold, fill=TEXT_WHITE)
+
+    max_vol = max(max(r["c_vol"], r["p_vol"]) for r in rows) or 1
+
+    y = top_h
+
+    for r in rows:
+        strike  = int(r["strike"])
+        c_vol   = r["c_vol"]
+        p_vol   = r["p_vol"]
+        c_delta = r["c_delta"]
+        p_delta = r["p_delta"]
+
+        if c_delta > p_delta:
+            color = (255, 80, 80)
+        elif p_delta > c_delta:
+            color = (80, 255, 120)
+        else:
+            color = (200, 200, 200)
+
+        # bars
+        c_w = int((c_vol / max_vol) * 300)
+        p_w = int((p_vol / max_vol) * 300)
+
+        draw.rectangle([10, y+8, 10 + c_w, y+20], fill=(120,170,255))
+        draw.rectangle([width-10-p_w, y+8, width-10, y+20], fill=(255,120,160))
+
+        txt = f"{strike} ATM" if strike == atm else f"{strike}"
+        draw.text((width//2 - 40, y+5), txt, fill=color, font=font_bold)
+
+        draw.text((10 + c_w + 5, y+5), f"{c_vol/1e5:.1f}L", fill=TEXT_WHITE, font=font)
+        draw.text((width - 10 - p_w - 60, y+5), f"{p_vol/1e5:.1f}L", fill=TEXT_WHITE, font=font)
+
+        y += row_h
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf.read()
+
+
 # ──────────────────────────────────────────────
 # FETCH & ALERT
 # ──────────────────────────────────────────────
@@ -281,11 +388,8 @@ def fetch_and_alert(index_name, cfg):
     total_p_oi = sum(r["p_oi"] for r in rows)
     pcr        = total_p_oi / total_c_oi if total_c_oi else 0
 
-    # Step 5: Generate image (NO CHANGE)
-    img_bytes = build_table_image(
-        index_name, ltp, atm, found_expiry, pcr, rows,
-        max_c_delta, max_p_delta, max_c_vol, max_p_vol
-    )
+    # Build new image
+    bar_img = build_bar_image(index_name, ltp, atm, pcr, rows)
 
     # ──────────────────────────────────────────────
     # ✅ NEW: SMART TELEGRAM TEXT (OI SENTIMENT)
@@ -325,8 +429,16 @@ def fetch_and_alert(index_name, cfg):
     final_msg = "\n".join(msg_lines)
 
     # ✅ Send BOTH image + new text
-    send_telegram_image(img_bytes, caption="")   # keep image clean
-    send_telegram_text(final_msg)
+    # keep image clean
+    # Build new text
+    text_msg = build_strikewise_text(index_name, ltp, atm, pcr, rows, cfg["step"])
+
+    # Build new image
+    bar_img = build_bar_image(index_name, ltp, atm, pcr, rows)
+
+    # Send both
+    send_telegram_text(text_msg)
+    send_telegram_image(bar_img, caption="")
 
     print(f"[{index_name}] Image + Smart text alert sent ✅")
 
