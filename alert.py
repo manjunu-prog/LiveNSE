@@ -103,80 +103,82 @@ def send_telegram_image(img_bytes, caption=""):
 # ──────────────────────────────────────────────
 # IMAGE TABLE GENERATOR
 # ──────────────────────────────────────────────
-def build_table_image(index_name, ltp, atm, expiry, pcr, rows,
-                      max_c_delta, max_p_delta, max_c_vol, max_p_vol):
-    
-    # 1. SETUP DIMENSIONS & FONTS
-    # We increase the row height to 110 to prevent text overlap
-    ROW_H, TOP_H, PAD = 110, 100, 40
-    WIDTH = 1000
-    HEIGHT = TOP_H + (len(rows) * ROW_H) + 60
-    BAR_MAX_W = 300 
+def build_table_image(index_name, ltp, atm, pcr, df, step):
+    try:
+        # Filter ATM ±5 and sort
+        df = df[(df["STRIKE"] >= atm - step*5) & (df["STRIKE"] <= atm + step*5)]
+        df = df.sort_values("STRIKE", ascending=False)
 
-    img = Image.new("RGB", (WIDTH, HEIGHT), (10, 12, 18))
-    draw = ImageDraw.Draw(img)
+        # Increase height to accommodate dual bars (Volume + OI Change)
+        width, height = 850, 80 + len(df)*60 + 40
+        img = Image.new("RGB", (width, height), (10, 12, 18)) # Darker background
+        draw = ImageDraw.Draw(img)
+        font = ImageFont.load_default()
 
-    # Load Fonts (Using your existing get_font helper or TTF paths)
-    title_f = get_font(32, bold=True)
-    label_f = get_font(22)
-    strike_f = get_font(26, bold=True)
+        # Header
+        draw.text((20, 15), f"🚀 {index_name} DUAL ANALYSIS | LTP: {ltp:,.0f} | PCR: {pcr:.2f}", fill=(255,255,255), font=font)
+        draw.text((20, 35), "LEFT: CALL (Vol/ΔOI) | RIGHT: PUT (Vol/ΔOI)", fill=(150, 150, 150), font=font)
 
-    # 2. HEADER
-    draw.text((PAD, 25), f"📊 {index_name} | LTP: {ltp:,.0f} | PCR: {pcr:.2f}", fill=(255,255,255), font=title_f)
-    draw.text((PAD, 70), f"Expiry: {expiry} | Generated: {datetime.now().strftime('%H:%M IST')}", fill=(150,150,150), font=get_font(16))
+        # Normalize scaling
+        max_vol = max(df["_cv"].max(), df["_pv"].max(), 1)
+        max_oi  = max(df["_cd"].abs().max(), df["_pd"].abs().max(), 1) # Use absolute for ΔOI scaling
 
-    # 3. DRAW DATA ROWS
-    # We use abs() for ΔOI scaling to handle potential short covering (negative values)
-    max_oi_val = max(abs(max_c_delta), abs(max_p_delta), 1)
+        y = 75
+        bar_max_w = 220
 
-    y = TOP_H
-    for row in rows:
-        strike = int(row["strike"])
-        cv, pv = row["c_vol"], row["p_vol"]
-        cd, pd = row["c_delta"], row["p_delta"]
+        for _, r in df.iterrows():
+            strike = int(r["STRIKE"])
+            # Data points
+            cv, pv = r["_cv"], r["_pv"]
+            cd, pd = r["_cd"], r["_pd"]
 
-        # --- VOLUME BARS (Grey) ---
-        cv_w = int((cv / max_c_vol) * BAR_MAX_W)
-        pv_w = int((pv / max_p_vol) * BAR_MAX_W)
-        draw.rectangle([PAD, y + 25, PAD + cv_w, y + 35], fill=(100, 116, 139))
-        draw.rectangle([WIDTH - PAD - pv_w, y + 25, WIDTH - PAD, y + 35], fill=(100, 116, 139))
+            # --- 1. VOLUME BARS (Top thin bar) ---
+            cv_w = int((cv / max_vol) * bar_max_w)
+            pv_w = int((pv / max_vol) * bar_max_w)
+            # CE Vol (Grey)
+            draw.rectangle([20, y, 20 + cv_w, y + 8], fill=(100, 116, 139))
+            # PE Vol (Grey)
+            draw.rectangle([width - 20 - pv_w, y, width - 20, y + 8], fill=(100, 116, 139))
 
-        # --- OI CHANGE BARS (Red/Green) ---
-        cd_w = int((abs(cd) / max_oi_val) * BAR_MAX_W)
-        pd_w = int((abs(pd) / max_oi_val) * BAR_MAX_W)
-        
-        # CE Side Colors (Left)
-        ce_color = (239, 68, 68) if cd > 0 else (34, 197, 94)
-        # PE Side Colors (Right)
-        pe_color = (34, 197, 94) if pd > 0 else (239, 68, 68)
+            # --- 2. OI CHANGE BARS (Bottom thick bar) ---
+            cd_w = int((abs(cd) / max_oi) * bar_max_w)
+            pd_w = int((abs(pd) / max_oi) * bar_max_w)
+            
+            # CE ΔOI Bar Color: Red if positive (selling), Green if negative (covering)
+            ce_color = (239, 68, 68) if cd > 0 else (34, 197, 94)
+            draw.rectangle([20, y + 12, 20 + cd_w, y + 25], fill=ce_color)
+            
+            # PE ΔOI Bar Color: Green if positive (selling/support), Red if negative
+            pe_color = (34, 197, 94) if pd > 0 else (239, 68, 68)
+            draw.rectangle([width - 20 - pd_w, y + 12, width - 20, y + 25], fill=pe_color)
 
-        draw.rectangle([PAD, y + 40, PAD + cd_w, y + 70], fill=ce_color)
-        draw.rectangle([WIDTH - PAD - pd_w, y + 40, WIDTH - PAD, y + 70], fill=pe_color)
+            # --- 3. STRIKE TEXT (Center) ---
+            strike_color = (255, 255, 255)
+            txt = f"{strike} ATM" if strike == atm else str(strike)
+            if strike == atm:
+                draw.rectangle([width//2 - 50, y, width//2 + 50, y + 25], outline=(255,255,255))
+            
+            draw.text((width//2 - 30, y + 5), txt, fill=strike_color, font=font)
 
-        # --- STRIKE TEXT (Center) ---
-        txt = f" {strike} ATM " if strike == atm else f" {strike} "
-        strike_x = WIDTH // 2 - 70
-        if strike == atm:
-            draw.rectangle([strike_x - 10, y + 20, strike_x + 150, y + 70], outline=(255,255,255), width=3)
-        draw.text((strike_x, y + 30), txt, fill=(255,255,255), font=strike_f)
+            # --- 4. VALUES ---
+            # Volume labels
+            draw.text((20 + cv_w + 5, y), f"V:{cv/1e5:.1f}L", fill=(148, 163, 184), font=font)
+            draw.text((width - 20 - pv_w - 70, y), f"V:{pv/1e5:.1f}L", fill=(148, 163, 184), font=font)
+            # OI Delta labels
+            draw.text((20 + cd_w + 5, y + 12), f"Δ:{cd/1e5:.1f}L", fill=ce_color, font=font)
+            draw.text((width - 20 - pd_w - 70, y + 12), f"Δ:{pd/1e5:.1f}L", fill=pe_color, font=font)
 
-        # --- TEXT LABELS (Positioned ABOVE the bars) ---
-        # Call side (Left)
-        draw.text((PAD, y), f"V: {fmt(cv)}", fill=(148, 163, 184), font=label_f)
-        draw.text((PAD + cd_w + 15, y + 40), f"Δ: {fmt(cd)}", fill=ce_color, font=label_f)
-        
-        # Put side (Right)
-        draw.text((WIDTH - PAD - 180, y), f"V: {fmt(pv)}", fill=(148, 163, 184), font=label_f)
-        draw.text((WIDTH - PAD - pd_w - 180, y + 40), f"Δ: {fmt(pd)}", fill=pe_color, font=label_f)
+            y += 55 # Space for next strike
 
-        y += ROW_H
-
-    # 4. SAVE TO BYTES
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    return buf.read()
-
+        # Save and Send
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
+                      data={"chat_id": TELEGRAM_CHAT_ID},
+                      files={"photo": ("analysis.png", buf, "image/png")}, timeout=15)
+    except Exception as e:
+        print(f"Error generating dual chart: {e}")
 # ... (ALL YOUR IMPORTS & CONFIG — NO CHANGE)
 
 
