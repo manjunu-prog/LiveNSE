@@ -50,6 +50,7 @@ TEXT_WHITE  = (255, 255, 255)
 TEXT_GREY   = (148, 163, 184)
 TEXT_BLACK  = (0,   0,   0)
 
+
 # ──────────────────────────────────────────────
 # FONT  — use default PIL bitmap font (no file needed)
 # ──────────────────────────────────────────────
@@ -104,108 +105,73 @@ def send_telegram_image(img_bytes, caption=""):
 # ──────────────────────────────────────────────
 def build_table_image(index_name, ltp, atm, expiry, pcr, rows,
                       max_c_delta, max_p_delta, max_c_vol, max_p_vol):
+    
+    # 1. SETUP DIMENSIONS & FONTS
+    # We increase the row height to 110 to prevent text overlap
+    ROW_H, TOP_H, PAD = 110, 100, 40
+    WIDTH = 1000
+    HEIGHT = TOP_H + (len(rows) * ROW_H) + 60
+    BAR_MAX_W = 300 
 
-    COLS   = ["C-Vol", "C-ΔOI", "STRIKE", "P-ΔOI", "P-Vol"]
-    WIDTHS = [120, 120, 100, 120, 120]   # column widths
-    ROW_H  = 34
-    HDR_H  = 40
-    TOP_H  = 60    # top info bar height
-    PAD    = 10
-
-    total_w = sum(WIDTHS) + PAD * 2
-    n_rows  = len(rows)
-    total_h = TOP_H + HDR_H + n_rows * ROW_H + PAD
-
-    img  = Image.new("RGB", (total_w, total_h), BG)
+    img = Image.new("RGB", (WIDTH, HEIGHT), (10, 12, 18))
     draw = ImageDraw.Draw(img)
 
-    fn       = get_font(14)
-    fn_bold  = get_font(14, bold=True)
-    fn_small = get_font(12)
-    fn_top   = get_font(15, bold=True)
+    # Load Fonts (Using your existing get_font helper or TTF paths)
+    title_f = get_font(32, bold=True)
+    label_f = get_font(22)
+    strike_f = get_font(26, bold=True)
 
-    # ── Top info bar ──
-    draw.rectangle([0, 0, total_w, TOP_H], fill=HEADER_BG)
-    draw.text((PAD, 8),
-              f"{index_name}  |  LTP: {ltp:,.0f}  |  ATM: {int(atm)}  |  PCR: {pcr:.2f}  |  Expiry: {expiry}",
-              font=fn_top, fill=TEXT_WHITE)
-    draw.text((PAD, 30),
-              f"Generated: {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d-%b-%Y  %H:%M IST')}",
-              font=fn_small, fill=TEXT_GREY)
+    # 2. HEADER
+    draw.text((PAD, 25), f"📊 {index_name} | LTP: {ltp:,.0f} | PCR: {pcr:.2f}", fill=(255,255,255), font=title_f)
+    draw.text((PAD, 70), f"Expiry: {expiry} | Generated: {datetime.now().strftime('%H:%M IST')}", fill=(150,150,150), font=get_font(16))
 
-    # ── Column headers ──
-    x = PAD
+    # 3. DRAW DATA ROWS
+    # We use abs() for ΔOI scaling to handle potential short covering (negative values)
+    max_oi_val = max(abs(max_c_delta), abs(max_p_delta), 1)
+
     y = TOP_H
-    for i, (col, w) in enumerate(zip(COLS, WIDTHS)):
-        draw.rectangle([x, y, x + w, y + HDR_H], fill=HEADER_BG)
-        # center text
-        bbox = draw.textbbox((0, 0), col, font=fn_bold)
-        tw   = bbox[2] - bbox[0]
-        draw.text((x + (w - tw) // 2, y + 10), col, font=fn_bold, fill=TEXT_GREY)
-        x += w
+    for row in rows:
+        strike = int(row["strike"])
+        cv, pv = row["c_vol"], row["p_vol"]
+        cd, pd = row["c_delta"], row["p_delta"]
 
-    # ── Data rows ──
-    for ri, row in enumerate(rows):
-        y    = TOP_H + HDR_H + ri * ROW_H
-        x    = PAD
-        is_atm = row["strike"] == atm
-        row_bg = ATM_BG if is_atm else (ROW_ALT if ri % 2 else ROW_BG)
+        # --- VOLUME BARS (Grey) ---
+        cv_w = int((cv / max_c_vol) * BAR_MAX_W)
+        pv_w = int((pv / max_p_vol) * BAR_MAX_W)
+        draw.rectangle([PAD, y + 25, PAD + cv_w, y + 35], fill=(100, 116, 139))
+        draw.rectangle([WIDTH - PAD - pv_w, y + 25, WIDTH - PAD, y + 35], fill=(100, 116, 139))
 
-        # Values
-        c_vol_s  = fmt(row["c_vol"])
-        c_d_s    = fmt(row["c_delta"]) + ("▲" if row["c_delta"] >= 0 else "▼")
-        strike_s = str(int(row["strike"]))
-        p_d_s    = fmt(row["p_delta"]) + ("▲" if row["p_delta"] >= 0 else "▼")
-        p_vol_s  = fmt(row["p_vol"])
+        # --- OI CHANGE BARS (Red/Green) ---
+        cd_w = int((abs(cd) / max_oi_val) * BAR_MAX_W)
+        pd_w = int((abs(pd) / max_oi_val) * BAR_MAX_W)
+        
+        # CE Side Colors (Left)
+        ce_color = (239, 68, 68) if cd > 0 else (34, 197, 94)
+        # PE Side Colors (Right)
+        pe_color = (34, 197, 94) if pd > 0 else (239, 68, 68)
 
-        values   = [c_vol_s, c_d_s, strike_s, p_d_s, p_vol_s]
+        draw.rectangle([PAD, y + 40, PAD + cd_w, y + 70], fill=ce_color)
+        draw.rectangle([WIDTH - PAD - pd_w, y + 40, WIDTH - PAD, y + 70], fill=pe_color)
 
-        for ci, (val, w) in enumerate(zip(values, WIDTHS)):
-            # Determine cell background
-            if is_atm and ci == 2:
-                cell_bg  = ATM_BG
-                cell_fg  = ATM_FG
-                cell_font = fn_bold
-            elif ci == 2:
-                cell_bg  = STRIKE_BG
-                cell_fg  = TEXT_WHITE
-                cell_font = fn_bold
-            elif ci == 0 and row["c_vol"] == max_c_vol:
-                cell_bg  = CYAN_BG
-                cell_fg  = TEXT_BLACK
-                cell_font = fn_bold
-            elif ci == 1 and row["c_delta"] == max_c_delta:
-                cell_bg  = CYAN_BG
-                cell_fg  = TEXT_BLACK
-                cell_font = fn_bold
-            elif ci == 3 and row["p_delta"] == max_p_delta:
-                cell_bg  = PINK_BG
-                cell_fg  = TEXT_BLACK
-                cell_font = fn_bold
-            elif ci == 4 and row["p_vol"] == max_p_vol:
-                cell_bg  = PINK_BG
-                cell_fg  = TEXT_BLACK
-                cell_font = fn_bold
-            else:
-                cell_bg  = row_bg
-                cell_fg  = ATM_FG if is_atm else TEXT_WHITE
-                cell_font = fn
+        # --- STRIKE TEXT (Center) ---
+        txt = f" {strike} ATM " if strike == atm else f" {strike} "
+        strike_x = WIDTH // 2 - 70
+        if strike == atm:
+            draw.rectangle([strike_x - 10, y + 20, strike_x + 150, y + 70], outline=(255,255,255), width=3)
+        draw.text((strike_x, y + 30), txt, fill=(255,255,255), font=strike_f)
 
-            draw.rectangle([x, y, x + w, y + ROW_H], fill=cell_bg)
+        # --- TEXT LABELS (Positioned ABOVE the bars) ---
+        # Call side (Left)
+        draw.text((PAD, y), f"V: {fmt(cv)}", fill=(148, 163, 184), font=label_f)
+        draw.text((PAD + cd_w + 15, y + 40), f"Δ: {fmt(cd)}", fill=ce_color, font=label_f)
+        
+        # Put side (Right)
+        draw.text((WIDTH - PAD - 180, y), f"V: {fmt(pv)}", fill=(148, 163, 184), font=label_f)
+        draw.text((WIDTH - PAD - pd_w - 180, y + 40), f"Δ: {fmt(pd)}", fill=pe_color, font=label_f)
 
-            # Center text in cell
-            bbox = draw.textbbox((0, 0), val, font=cell_font)
-            tw   = bbox[2] - bbox[0]
-            th   = bbox[3] - bbox[1]
-            draw.text((x + (w - tw) // 2, y + (ROW_H - th) // 2),
-                      val, font=cell_font, fill=cell_fg)
-            x += w
+        y += ROW_H
 
-        # Thin row separator
-        draw.line([(PAD, y + ROW_H), (total_w - PAD, y + ROW_H)],
-                  fill=(30, 36, 54), width=1)
-
-    # Save to bytes
+    # 4. SAVE TO BYTES
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
