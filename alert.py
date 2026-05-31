@@ -398,11 +398,11 @@ def fetch_and_alert(index_name, cfg):
     text_msg = build_strikewise_text(index_name, ltp, atm, pcr, rows, cfg["step"])
 
     # Build new image
-    #bar_img = build_bar_image(index_name, ltp, atm, pcr, rows)
+    bar_img = build_bar_image(index_name, ltp, atm, pcr, rows)
 
     # Send both
-    #send_telegram_text(text_msg)
-    #send_telegram_image(bar_img, caption="")
+    send_telegram_text(text_msg)
+    send_telegram_image(bar_img, caption="")
 
     print(f"[{index_name}] Image + Smart text alert sent ✅")
 
