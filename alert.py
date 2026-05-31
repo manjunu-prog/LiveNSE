@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 # ──────────────────────────────────────────────
 # CONFIG
 # ──────────────────────────────────────────────
-DHAN_ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJwX2lwIjoiIiwic19pcCI6IiIsImlzcyI6ImRoYW4iLCJwYXJ0bmVySWQiOiIiLCJleHAiOjE3NzgwODkxMzUsImlhdCI6MTc3ODAwMjczNSwidG9rZW5Db25zdW1lclR5cGUiOiJTRUxGIiwid2ViaG9va1VybCI6Imh0dHBzOi8vd2ViLmRoYW4uY28vaW5kZXgvcHJvZmlsZSIsImRoYW5DbGllbnRJZCI6IjExMDgwNjYwOTQifQ.kpJDLs-jFgMHRN8iKn8SuIpNvWFi2M3sOj5y-04HiiqMout1_ayNrk6lPmBcozaplMOe_oKUDF7QsbUZHYK-Pg"
+DHAN_ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJwX2lwIjoiIiwic19pcCI6IiIsImlzcyI6ImRoYW4iLCJwYXJ0bmVySWQiOiIiLCJleHAiOjE3ODAzMjM5MDIsImlhdCI6MTc4MDIzNzUwMiwidG9rZW5Db25zdW1lclR5cGUiOiJTRUxGIiwid2ViaG9va1VybCI6Imh0dHBzOi8vd2ViLmRoYW4uY28vaW5kZXgvcHJvZmlsZSIsImRoYW5DbGllbnRJZCI6IjExMDgwNjYwOTQifQ.cYSJ99g4qKKvENSIc51UDQLweE5iuR1W0AyF9fTtuSAqJCClYI0s2ng_sqHBOi5t19-S5wyH_qUOnaQAJETtMQ"
 DHAN_CLIENT_ID    = "1108066094"
 # Shivu account
 TELEGRAM_TOKEN_1   = "8584181321:AAHBBTFlhGPs-mBgbRHXLkJME9FaqJh5ofE"
