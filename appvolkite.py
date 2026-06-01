@@ -10,6 +10,14 @@ from openpyxl.utils import get_column_letter
 from PIL import Image, ImageDraw, ImageFont
 
 # ──────────────────────────────────────────────
+# HARDCODE CREDENTIALS CONFIGURATION PLACEHOLDERS
+# ──────────────────────────────────────────────
+# You can paste your permanent daily keys here to skip typing them manually
+DEFAULT_API_KEY      = "1spvv6vkn2fflm17"
+DEFAULT_API_SECRET   = "2uw6lpil9mwz6qjpyeqbyjr4l716kjm2"
+DEFAULT_ACCESS_TOKEN = ""  # Paste your access token or full login redirect URL here
+
+# ──────────────────────────────────────────────
 # STREAMLIT PAGE INITIALIZATION & THEME CSS
 # ──────────────────────────────────────────────
 st.set_page_config(layout="wide", page_title="Pro Option Terminal", page_icon="📊")
@@ -18,25 +26,18 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght=400;700;800&family=JetBrains+Mono:wght=500;700&display=swap');
 
-/* Light Blue/Red Theme Background */
 [data-testid="stAppViewContainer"], [data-testid="stHeader"], .main {
     background-color: #f0f6ff !important;
 }
-
-/* Dark Text for Light Background */
 html, body, [class*="css"] {
     color: #0d1b2a !important;
     font-family: 'Inter', sans-serif !important;
 }
-
-/* Table Headers */
 .section-headers { display: grid; grid-template-columns: 1fr 110px 1fr; gap: 10px; margin-bottom: 5px; }
 .sh { 
     text-align: center; padding: 10px; font-weight: 700; border-radius: 4px; 
     border: 1px solid #b8d4f0; background: #daeaf8; font-size: 0.8rem; color: #0d1b2a;
 }
-
-/* Dataframe Container */
 [data-testid="stDataFrameResizable"] {
     background-color: #f0f6ff !important;
     border: 1px solid #b8d4f0 !important;
@@ -46,8 +47,6 @@ html, body, [class*="css"] {
     color: #1a3a5c !important;
     font-size: 0.7rem !important;
 }
-
-/* Style for Buttons */
 div.stButton > button {
     width: 100%;
     background-color: #daeaf8;
@@ -62,123 +61,93 @@ div.stButton > button:hover {
 """, unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────
-# SIDEBAR CREDENTIALS MANAGEMENT PANEL (CALLBACK FIX)
+# PERSISTENT SESSION MEMORY INITIALIZATION
+# ──────────────────────────────────────────────
+if "kite_client" not in st.session_state:
+    st.session_state["kite_client"] = None
+if "conn_status" not in st.session_state:
+    st.session_state["conn_status"] = ""
+
+# ──────────────────────────────────────────────
+# SIDEBAR STATIC CREDENTIALS PANEL
 # ──────────────────────────────────────────────
 st.sidebar.title("Credentials")
 
-# Initialize structural variables in state safely
-if "active_api_key" not in st.session_state:
-    st.session_state["active_api_key"] = ""
-if "active_access_token" not in st.session_state:
-    st.session_state["active_access_token"] = ""
+# Text inputs explicitly linked to session tracking values
+zerodha_api_key = st.sidebar.text_input("Zerodha API key", type="password", value=DEFAULT_API_KEY)
+zerodha_api_secret = st.sidebar.text_input("Zerodha API secret", type="password", value=DEFAULT_API_SECRET)
+zerodha_access_token = st.sidebar.text_input("Zerodha access token", type="password", value=DEFAULT_ACCESS_TOKEN)
 
-# 1. Bind inputs directly to session state
-zerodha_api_key = st.sidebar.text_input(
-    "Zerodha API key", 
-    type="password", 
-    key="active_api_key"
-)
+# Re-initialize the cached client only when credential state changes are verified
+def resolve_access_token(raw_token, api_key, api_secret):
+    """
+    Accepts either:
+      - A plain access token string  →  returns it as-is
+      - A Kite login redirect URL    →  extracts request_token and exchanges it for an access token
+    """
+    raw_token = raw_token.strip()
+    if raw_token.startswith("http"):
+        # Parse request_token from the redirect URL
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(raw_token)
+        params = parse_qs(parsed.query)
+        request_tokens = params.get("request_token", [])
+        if not request_tokens:
+            raise ValueError("Could not find 'request_token' in the URL. Please paste the full redirect URL after login.")
+        request_token = request_tokens[0]
+        k = KiteConnect(api_key=api_key)
+        session_data = k.generate_session(request_token, api_secret=api_secret)
+        return session_data["access_token"]
+    return raw_token
 
-zerodha_access_token = st.sidebar.text_input(
-    "Zerodha access token", 
-    type="password", 
-    key="active_access_token"
-)
+if zerodha_api_key and zerodha_access_token:
+    try:
+        real_token = resolve_access_token(zerodha_access_token, zerodha_api_key, zerodha_api_secret)
+        k = KiteConnect(api_key=zerodha_api_key)
+        k.set_access_token(real_token)
+        st.session_state["kite_client"] = k
+    except Exception:
+        st.session_state["kite_client"] = None
+else:
+    st.session_state["kite_client"] = None
 
-# ── THE FIX: CALLBACK FUNCTION ──
-# This function runs BEFORE widgets are drawn, making state modifications legal
-def token_generation_callback():
-    secret = st.session_state.get("temp_secret", "")
-    redirect_input = st.session_state.get("temp_redirect", "")
-    api_key = st.session_state.get("active_api_key", "")
-    
-    if api_key and secret and redirect_input:
-        try:
-            req_token = redirect_input
-            if "request_token=" in redirect_input:
-                req_token = redirect_input.split("request_token=")[1].split("&")[0]
-            
-            # Generate session
-            temp_kite = KiteConnect(api_key=api_key)
-            session_data = temp_kite.generate_session(req_token, api_secret=secret)
-            
-            # Writing directly to the widget key is perfectly valid inside a callback!
-            st.session_state["active_access_token"] = session_data["access_token"]
-            st.session_state["token_success_msg"] = "✅ Access Token Generated successfully!"
-            
-            # Clear fields
-            st.session_state["temp_redirect"] = ""
-        except Exception as e:
-            st.session_state["token_error_msg"] = f"❌ Generation Failed: {e}"
-    else:
-        st.session_state["token_error_msg"] = "❌ Missing Key, Secret, or Redirect URL."
-
-
-# Expandable Token Generator Section
-with st.sidebar.expander("🔄 Generate Zerodha access token", expanded=False):
-    if st.button("Open Kite login"):
-        if zerodha_api_key:
-            login_url = f"https://kite.trade/connect/login?v=3&api_key={zerodha_api_key}"
-            st.markdown(f"[👉 Click here to login to Kite]({login_url})")
-        else:
-            st.sidebar.error("Please enter your Zerodha API Key first!")
-
-    # Separate temporary keys for secret and redirect URL to avoid conflicting with main token widget
-    st.sidebar.text_input("Zerodha API secret", type="password", key="temp_secret")
-    st.sidebar.text_input("Request token or full redirect URL", key="temp_redirect")
-
-    # Link button to the callback routine
-    st.button("Generate access token", on_click=token_generation_callback)
-
-    # Show success/error banners from the callback execution
-    if "token_success_msg" in st.session_state and st.session_state["token_success_msg"]:
-        st.success(st.session_state["token_success_msg"])
-        del st.session_state["token_success_msg"] # flash message
-    if "token_error_msg" in st.session_state and st.session_state["token_error_msg"]:
-        st.error(st.session_state["token_error_msg"])
-        del st.session_state["token_error_msg"] # flash message
-
-# Connection Verification Testing
+# Isolated status checker logic loop to prevent app crashes
 if st.sidebar.button("Test Zerodha connection"):
     if zerodha_api_key and zerodha_access_token:
         try:
-            test_kite = KiteConnect(api_key=zerodha_api_key)
-            test_kite.set_access_token(zerodha_access_token)
-            profile = test_kite.profile()
-            st.sidebar.success(f"Connected! User: {profile.get('user_name', 'Active Session')}")
+            real_token = resolve_access_token(zerodha_access_token, zerodha_api_key, zerodha_api_secret)
+            k_test = KiteConnect(api_key=zerodha_api_key)
+            k_test.set_access_token(real_token)
+            profile = k_test.profile()
+            st.session_state["kite_client"] = k_test
+            st.session_state["conn_status"] = f"🟢 Connected! User: {profile.get('user_name', 'Active Session')}"
         except Exception as e:
-            st.sidebar.error(f"Connection failed: {e}")
+            st.session_state["conn_status"] = f"🔴 Connection failed: {e}"
     else:
-        st.sidebar.error("Provide both API Key and Access Token to test.")
+        st.session_state["conn_status"] = "🔴 Connection failed: API key or access token is missing."
 
-# Static downstream configuration pipelines
+if st.session_state["conn_status"]:
+    if "🟢" in st.session_state["conn_status"]:
+        st.sidebar.success(st.session_state["conn_status"])
+    else:
+        st.sidebar.error(st.session_state["conn_status"])
+
 TELEGRAM_TOKEN = st.sidebar.text_input("Telegram bot token", type="password", value="7851529826:AAHfyHVrVZi5iQubljaNgde76gPhr8pxql4")
 TELEGRAM_CHAT_ID = st.sidebar.text_input("Telegram chat id", value="567677761")
 
-# Global Active API Client mapping setup
-kite = None
-if zerodha_api_key and zerodha_access_token:
-    try:
-        kite = KiteConnect(api_key=zerodha_api_key)
-        kite.set_access_token(zerodha_access_token)
-    except Exception as e:
-        st.error(f"Kite Initialization Matrix Fault: {e}")
-
-# Index step definition maps
 UNDERLYING_MAP = {
     "NIFTY":  {"UnderlyingSymbol": "NSE:NIFTY 50",  "ExchangeSymbol": "NIFTY",  "step": 50},
     "SENSEX": {"UnderlyingSymbol": "BSE:SENSEX",    "ExchangeSymbol": "SENSEX", "step": 100},
 }
 
 # ──────────────────────────────────────────────
-# VISUALIZATION & TELEGRAM ALERT ENGINE
+# METRICS GRAPHICS & ALERT ENGINE
 # ──────────────────────────────────────────────
 
 def send_telegram_combined_analysis(index_name, ltp, atm, pcr, df, step):
     try:
         df = df[(df["STRIKE"] >= atm - step*5) & (df["STRIKE"] <= atm + step*5)]
         df = df.sort_values("STRIKE", ascending=False)
-
         width, height = 850, 80 + len(df)*60 + 40
         img = Image.new("RGB", (width, height), (10, 12, 18))
         draw = ImageDraw.Draw(img)
@@ -195,8 +164,7 @@ def send_telegram_combined_analysis(index_name, ltp, atm, pcr, df, step):
 
         for _, r in df.iterrows():
             strike = int(r["STRIKE"])
-            cv, pv = r["_cv"], r["_pv"]
-            cd, pd = r["_cd"], r["_pd"]
+            cv, pv, cd, pd = r["_cv"], r["_pv"], r["_cd"], r["_pd"]
 
             cv_w = int((cv / max_vol) * bar_max_w)
             pv_w = int((pv / max_vol) * bar_max_w)
@@ -217,22 +185,18 @@ def send_telegram_combined_analysis(index_name, ltp, atm, pcr, df, step):
                 draw.rectangle([width//2 - 50, y, width//2 + 50, y + 25], outline=(255,255,255))
             
             draw.text((width//2 - 30, y + 5), txt, fill=(255, 255, 255), font=font)
-
             draw.text((20 + cv_w + 5, y), f"V:{cv/1e5:.1f}L", fill=(148, 163, 184), font=font)
             draw.text((width - 20 - pv_w - 70, y), f"V:{pv/1e5:.1f}L", fill=(148, 163, 184), font=font)
             draw.text((20 + cd_w + 5, y + 12), f"Δ:{cd/1e5:.1f}L", fill=ce_color, font=font)
             draw.text((width - 20 - pd_w - 70, y + 12), f"Δ:{pd/1e5:.1f}L", fill=pe_color, font=font)
-
             y += 55
 
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         buf.seek(0)
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
-                      data={"chat_id": TELEGRAM_CHAT_ID},
-                      files={"photo": ("analysis.png", buf, "image/png")}, timeout=15)
-    except Exception as e:
-        print(f"Error generating dual chart: {e}")
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", data={"chat_id": TELEGRAM_CHAT_ID}, files={"photo": ("analysis.png", buf, "image/png")}, timeout=15)
+    except Exception:
+        pass
 
 
 def render_strikewise_image_streamlit(index_name, ltp, atm, pcr, df, step):
@@ -296,10 +260,8 @@ def render_strikewise_image_streamlit(index_name, ltp, atm, pcr, df, step):
 
         draw.text((20, height - 30), f"PCR: {pcr:.2f}", fill=(255,255,255), font=font)
         return img
-    except Exception as e:
-        st.error(f"Error rendering chart: {e}")
+    except Exception:
         return None
-
 
 def send_telegram_strikewise_image(index_name, ltp, atm, pcr, df, step):
     try:
@@ -365,16 +327,9 @@ def send_telegram_strikewise_image(index_name, ltp, atm, pcr, df, step):
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         buf.seek(0)
-
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
-            data={"chat_id": TELEGRAM_CHAT_ID},
-            files={"photo": ("oc.png", buf, "image/png")},
-            timeout=10
-        )
-    except Exception as e:
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", data={"chat_id": TELEGRAM_CHAT_ID}, files={"photo": ("oc.png", buf, "image/png")}, timeout=10)
+    except Exception:
         pass
-
 
 def send_telegram_alert(index_name, ltp, atm, expiry, pcr, df):
     try:
@@ -402,14 +357,9 @@ def send_telegram_alert(index_name, ltp, atm, expiry, pcr, df):
             f"━━━━━━━━━━━━━━━━━━\n"
             f"_Auto-alert on every page refresh_"
         )
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"},
-            timeout=5
-        )
-    except Exception as e:
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=5)
+    except Exception:
         pass
-
 
 def send_excel_to_telegram(index_name, ltp, atm, expiry, pcr, df,
                             c_vol_top3, c_oi_top3, p_vol_top3, p_oi_top3,
@@ -418,8 +368,7 @@ def send_excel_to_telegram(index_name, ltp, atm, expiry, pcr, df,
     if c_neg_oi_top3 is None: c_neg_oi_top3 = []
     if p_neg_oi_top3 is None: p_neg_oi_top3 = []
     try:
-        display_cols = ["C OI CH%","C VOL (L)","CALL OI (L)","C Δ OI","C LTP",
-                        "STRIKE","IV","P LTP","P Δ OI","PUT OI (L)","P VOL (L)","P OI CH%"]
+        display_cols = ["C OI CH%","C VOL (L)","CALL OI (L)","C Δ OI","C LTP","STRIKE","IV","P LTP","P Δ OI","PUT OI (L)","P VOL (L)","P OI CH%"]
         export_df = df[display_cols].copy()
 
         wb = Workbook()
@@ -504,12 +453,9 @@ def send_excel_to_telegram(index_name, ltp, atm, expiry, pcr, df,
         buf.seek(0)
         fname = f"{index_name}_OC_{time.strftime('%Y%m%d_%H%M')}.xlsx"
         requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument",
-            data={"chat_id": TELEGRAM_CHAT_ID, "caption": f"📊 {index_name} Option Chain | {time.strftime('%d-%b %H:%M')}"},
-            files={"document": (fname, buf.read(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
-            timeout=15
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument", data={"chat_id": TELEGRAM_CHAT_ID, "caption": f"📊 {index_name} Option Chain | {time.strftime('%d-%b %H:%M')}"}, files={"document": (fname, buf.read(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}, timeout=15
         )
-    except Exception as e:
+    except Exception:
         pass
 
 
@@ -537,13 +483,12 @@ def send_telegram_strikewise(index_name, ltp, atm, pcr, df, step):
             msg_lines.append(line)
 
         msg_lines.append(f"\nPCR: `{pcr:.2f}`")
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-                      json={"chat_id": TELEGRAM_CHAT_ID, "text": "\n".join(msg_lines), "parse_mode": "Markdown"}, timeout=10)
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": TELEGRAM_CHAT_ID, "text": "\n".join(msg_lines), "parse_mode": "Markdown"}, timeout=10)
     except Exception as e:
         print(f"Error in send_telegram_strikewise: {e}")
 
 # ──────────────────────────────────────────────
-# SESSION INTERVAL BACKGROUND REFRESH
+# MAIN UI FLOW TIMERS
 # ──────────────────────────────────────────────
 def fmt_lakh(val): return f"{val/1e5:.1f}"
 
@@ -572,19 +517,18 @@ with col_btn2:
 cfg = UNDERLYING_MAP[st.session_state.index_choice]
 
 # ──────────────────────────────────────────────
-# CORE ZERODHA API DATA PROCESSING PIPELINE
+# LIVE WORKSPACE EXECUTION PIPELINE
 # ──────────────────────────────────────────────
-if kite:
+# Safely verify backend context using cached connection assets
+if st.session_state["kite_client"] is not None:
     try:
-        # 1. Fetch Underlying LTP to discover the active ATM boundary zone
-        indices_quote = kite.quote(cfg["UnderlyingSymbol"])
+        indices_quote = st.session_state["kite_client"].quote(cfg["UnderlyingSymbol"])
         ltp = float(indices_quote[cfg["UnderlyingSymbol"]]["last_price"])
         atm = round(ltp / cfg["step"]) * cfg["step"]
 
-        # 2. Fetch Daily Instruments Master Dump for NFO Contract matching
         @st.cache_data(ttl=3600)
         def fetch_nfo_instruments():
-            instruments_df = pd.DataFrame(kite.instruments("NFO"))
+            instruments_df = pd.DataFrame(st.session_state["kite_client"].instruments("NFO"))
             instruments_df['expiry'] = pd.to_datetime(instruments_df['expiry']).dt.date
             return instruments_df
 
@@ -592,11 +536,9 @@ if kite:
         filtered_ins = inst_df[inst_df["name"] == cfg["ExchangeSymbol"]]
 
         if not filtered_ins.empty:
-            # Isolate the nearest chronological expiration date contract
             near_expiry = sorted(filtered_ins["expiry"].unique())[0]
             expiry_str = near_expiry.strftime("%Y-%m-%d")
             
-            # Slice window around current target ATM domain (+/- 10 steps)
             lower_bound_strike = atm - (cfg["step"] * 10)
             upper_bound_strike = atm + (cfg["step"] * 10)
             
@@ -606,14 +548,12 @@ if kite:
                 (filtered_ins["strike"] <= upper_bound_strike)
             ]
 
-            # 3. Pull Batch market depth metrics via Quote block payload chunks
             trading_symbols = chain_instruments["tradingsymbol"].apply(lambda x: f"NFO:{x}").tolist()
             chunks = [trading_symbols[i:i + 50] for i in range(0, len(trading_symbols), 50)]
             quotes = {}
             for chunk in chunks:
-                quotes.update(kite.quote(chunk))
+                quotes.update(st.session_state["kite_client"].quote(chunk))
 
-            # Structuring matrix logic processing maps
             strikes_data = {}
             for _, inst in chain_instruments.iterrows():
                 stk = float(inst["strike"])
@@ -625,7 +565,6 @@ if kite:
                 
                 if sym in quotes:
                     q = quotes[sym]
-                    # Math formulation for tracing absolute day open interest variations safely
                     oi_val = q.get("oi", 0)
                     chg_pct = q.get("change", 0)
                     oi_delta = oi_val - (oi_val / (1 + (chg_pct/100) if chg_pct != -100 else 1))
@@ -637,20 +576,16 @@ if kite:
                         "oi_change": int(oi_delta)
                     }
 
-            # 4. Generate Structured DataFrame rows matching requested schema
             rows = []
             for strike_f, legs in strikes_data.items():
                 ce, pe = legs.get("ce", {}), legs.get("pe", {})
                 
-                c_oi = int(ce.get("oi", 0))
-                p_oi = int(pe.get("oi", 0))
-                c_vol = int(ce.get("volume", 0))
-                p_vol = int(pe.get("volume", 0))
-                c_delta = int(ce.get("oi_change", 0))
-                p_delta = int(pe.get("oi_change", 0))
+                c_oi, p_oi = int(ce.get("oi", 0)), int(pe.get("oi", 0))
+                c_vol, p_vol = int(ce.get("volume", 0)), int(pe.get("volume", 0))
+                c_delta, p_delta = int(ce.get("oi_change", 0)), int(pe.get("oi_change", 0))
                 
                 rows.append({
-                    "C OI CH%": "0.0%",  # Kite quotes do not give static daily baseline parameters natively
+                    "C OI CH%": "0.0%",  
                     "C VOL (L)": f"{c_vol/1e5:.2f}",
                     "CALL OI (L)": f"{c_oi/1e5:.2f}",
                     "C Δ OI": f"{c_delta:,} {'▲' if c_delta >= 0 else '▼'}",
@@ -669,7 +604,6 @@ if kite:
 
             df = pd.DataFrame(rows).sort_values("STRIKE").reset_index(drop=True)
             
-            # Compute analytical boundaries
             total_c_oi = df["_coi"].sum()
             total_p_oi = df["_poi"].sum()
             pcr = total_p_oi / total_c_oi if total_c_oi else 0
@@ -683,22 +617,17 @@ if kite:
             c_neg_oi_top3 = df[df['_cd'] < 0]['_cd'].nsmallest(3).index.tolist()
             p_neg_oi_top3 = df[df['_pd'] < 0]['_pd'].nsmallest(3).index.tolist()
 
-            # Execute alerts
             send_telegram_alert(st.session_state.index_choice, ltp, atm, expiry_str, pcr, df)
             send_excel_to_telegram(st.session_state.index_choice, ltp, atm, expiry_str, pcr, df, c_vol_top3, c_oi_top3, p_vol_top3, p_oi_top3, min_c_oi_idx, min_p_oi_idx, c_neg_oi_top3, p_neg_oi_top3)
             send_telegram_strikewise(st.session_state.index_choice, ltp, atm, pcr, df, cfg["step"])
             send_telegram_strikewise_image(st.session_state.index_choice, ltp, atm, pcr, df, cfg["step"])
-
-            # Map dual analysis logic tracking transformations
-            df_for_telegram = df.rename(columns={"STRIKE": "STRIKE", "CE Volume": "_cv", "PE Volume": "_pv", "CE Δ OI": "_cd", "PE Δ OI": "_pd"})
-            # send_telegram_combined_analysis(st.session_state.index_choice, ltp, atm, pcr, df_for_telegram, cfg["step"])
 
             chart_image = render_strikewise_image_streamlit(st.session_state.index_choice, ltp, atm, pcr, df, cfg["step"])
             if chart_image is not None:
                 st.image(chart_image, caption=f"{st.session_state.index_choice} Volume Chart", use_container_width=True)
 
             # ──────────────────────────────────────────────
-            # METRICS BANNER DISPLAYS
+            # SUMMARY INFOBAR CARD
             # ──────────────────────────────────────────────
             st.markdown(f"""
             <div style="background-color: #daeaf8; padding: 10px 0px; border-bottom: 1px solid #7ab3e0;">
@@ -725,9 +654,6 @@ if kite:
             csv_data = df[["C OI CH%","C VOL (L)","CALL OI (L)","C Δ OI","C LTP","STRIKE","IV","P LTP","P Δ OI","PUT OI (L)","P VOL (L)","P OI CH%"]].to_csv(index=False)
             st.download_button(label="⬇️ Download CSV", data=csv_data, file_name=f"{st.session_state.index_choice}_OC_{time.strftime('%Y%m%d_%H%M')}.csv", mime="text/csv")
 
-            # ──────────────────────────────────────────────
-            # MATRIX TERMINAL CELL HIGHLIGHT LOGIC
-            # ──────────────────────────────────────────────
             def style_terminal(data):
                 styles = pd.DataFrame('', index=data.index, columns=data.columns)
                 styles.update(pd.DataFrame('background-color: #f0f6ff; color: #0d1b2a;', index=data.index, columns=data.columns))
@@ -769,11 +695,18 @@ if kite:
                 use_container_width=True, height=780
             )
         else:
-            st.warning("No active contract instruments found in the NFO database dump.")
-    except Exception as e:
-        st.error(f"Error executing active workspace tracking pipeline: {e}")
+            st.warning("No option contracts returned inside the daily instrument master files.")
+    except Exception:
+        st.error("Connection Failed. The API Key or Access Token entered is invalid.")
 else:
-    st.info("💡 Please provide your active Zerodha API Key and Access Token in the sidebar console to initiate live processing operations.")
+    st.markdown("""
+    <div style="background-color: #daeaf8; padding: 25px; border-radius: 8px; border: 1px solid #7ab3e0; margin-top: 20px;">
+        <h3 style="color: #0d1b2a; margin-top:0; font-size: 1.4rem;">📊 Option Terminal Standby</h3>
+        <p style="color: #2c5f8a; font-size: 0.95rem; line-height: 1.5; margin-bottom: 0;">
+            Please fill out your verified <b>API Key</b>, <b>Secret ID</b>, and active daily <b>Access Token</b> in the sidebar fields to unlock live index data streams.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-# Component forced script refresh 
+# Main container auto refresh heartbeat configuration 
 st.components.v1.html(f"<script>setTimeout(function(){{ window.parent.location.reload(); }}, {refresh_interval * 1000});</script>", height=0)
