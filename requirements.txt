@@ -1,9 +1,6 @@
 streamlit
 pandas
-requests
-pytz
-Pillow
 numpy
-matplotlib
-openpyxl
-KiteConnect
+requests
+pyotp
+fyers-apiv3
