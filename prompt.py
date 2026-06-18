@@ -349,6 +349,7 @@ df_flow['timestamp'] = pd.to_datetime(df_flow['timestamp'])
 
 unique_times = np.sort(df_flow['timestamp'].unique())
 df_micro_structure = pd.DataFrame()
+numeric_delta = pd.DataFrame()
 
 if len(unique_times) >= 2:
     t_current = unique_times[-1]
@@ -365,6 +366,9 @@ if len(unique_times) >= 2:
     df_delta['Δ PE LTP'] = (df_curr['pe_ltp'] - df_prev['pe_ltp']).round(2)
     df_delta['Δ PE OI'] = df_curr['pe_oi'] - df_prev['pe_oi']
     df_delta['Δ PE Vol'] = df_curr['pe_vol'] - df_prev['pe_vol']
+    
+    # Store the pure numeric dataframe for the Radar UI before formatting
+    numeric_delta = df_delta.copy()
     
     # Format with explicit signs and handle zero cleanly
     for col in ['Δ CE Vol', 'Δ CE OI', 'Δ PE OI', 'Δ PE Vol']:
@@ -441,9 +445,50 @@ with col_b:
 
 st.markdown("---")
 
+# --- NEW: INSTITUTIONAL RADAR UI ---
+st.subheader("🔥 Institutional Radar: Aggressive Strike Shifts")
+st.caption("Auto-detecting the top 2 strikes with the highest positive surge in Open Interest since the last refresh.")
+
+if not numeric_delta.empty:
+    radar_col1, radar_col2 = st.columns(2)
+    
+    # Filter for positive OI deltas and grab the top 2 highest surges
+    top_ce = numeric_delta[numeric_delta['Δ CE OI'] > 0].sort_values(by='Δ CE OI', ascending=False).head(2)
+    top_pe = numeric_delta[numeric_delta['Δ PE OI'] > 0].sort_values(by='Δ PE OI', ascending=False).head(2)
+    
+    with radar_col1:
+        st.markdown("""
+        <div style='background-color: rgba(74, 222, 128, 0.05); padding: 15px; border-radius: 8px; border-left: 4px solid #4ade80; margin-bottom: 15px;'>
+            <h4 style='margin-top: 0; color: #4ade80;'>🟢 Top Call (CE) Surges</h4>
+        """, unsafe_allow_html=True)
+        
+        if not top_ce.empty:
+            for idx, row in top_ce.iterrows():
+                st.markdown(f"**Strike {idx}** &nbsp; | &nbsp; Δ OI: `<span style='color:#4ade80;'>+{int(row['Δ CE OI']):,}</span>` &nbsp; | &nbsp; Δ Vol: `+{int(row['Δ CE Vol']):,}`", unsafe_allow_html=True)
+        else:
+            st.write("No positive Call OI shifts detected.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with radar_col2:
+        st.markdown("""
+        <div style='background-color: rgba(248, 113, 113, 0.05); padding: 15px; border-radius: 8px; border-left: 4px solid #f87171; margin-bottom: 15px;'>
+            <h4 style='margin-top: 0; color: #f87171;'>🔴 Top Put (PE) Surges</h4>
+        """, unsafe_allow_html=True)
+        
+        if not top_pe.empty:
+            for idx, row in top_pe.iterrows():
+                st.markdown(f"**Strike {idx}** &nbsp; | &nbsp; Δ OI: `<span style='color:#f87171;'>+{int(row['Δ PE OI']):,}</span>` &nbsp; | &nbsp; Δ Vol: `+{int(row['Δ PE Vol']):,}`", unsafe_allow_html=True)
+        else:
+            st.write("No positive Put OI shifts detected.")
+        st.markdown("</div>", unsafe_allow_html=True)
+else:
+    st.info("Awaiting the next data refresh to calculate Institutional Radar metrics.")
+
+st.markdown("---")
+
 # --- MICRO-STRUCTURE STRIKE TRACKER UI ---
 st.subheader("🔬 Micro-Structure Strike Tracker (ATM ± 5)")
-st.caption(f"Real-time order flow shifts. Showing $\Delta$ since last refresh at: {pd.to_datetime(unique_times[-2]).strftime('%H:%M:%S') if len(unique_times) >= 2 else 'N/A'} (IST)")
+st.caption(f"Real-time order flow shifts. Showing Δ since last refresh at: {pd.to_datetime(unique_times[-2]).strftime('%H:%M:%S') if len(unique_times) >= 2 else 'N/A'} (IST)")
 
 if not df_micro_structure.empty:
     styled_df = df_micro_structure.style.map(color_coding, subset=['Δ CE Vol', 'Δ CE OI', 'Δ CE LTP', 'Δ PE LTP', 'Δ PE OI', 'Δ PE Vol'])
@@ -490,7 +535,7 @@ if not df_micro_structure.empty:
             
             styled_strike_df = df_strike_display.style.map(color_coding, subset=['Δ CE OI', 'Δ CE Vol', 'Δ PE OI', 'Δ PE Vol'])
             
-            # --- NEW UI TABS ---
+            # --- UI TABS ---
             tab1, tab2 = st.tabs(["📊 Full Comprehensive Ledger", "📉 Isolated Delta Shifts (Excel View)"])
             
             with tab1:
