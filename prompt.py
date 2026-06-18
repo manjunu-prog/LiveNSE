@@ -453,7 +453,6 @@ if not df_micro_structure.empty:
     st.caption("Click on any strike below to expand its full refresh-by-refresh timeline.")
 
     for selected_strike in target_strikes:
-        # Get latest LTPs for the expander title
         latest_row = df_flow[df_flow['strike'] == selected_strike].sort_values('timestamp', ascending=False).head(1)
         if not latest_row.empty:
             ce_ltp = latest_row['ce_ltp'].values[0]
@@ -490,7 +489,27 @@ if not df_micro_structure.empty:
             df_strike_display.columns = ['Timestamp', 'CE OI', 'Δ CE OI', 'CE Volume', 'Δ CE Vol', 'PE OI', 'Δ PE OI', 'PE Volume', 'Δ PE Vol']
             
             styled_strike_df = df_strike_display.style.map(color_coding, subset=['Δ CE OI', 'Δ CE Vol', 'Δ PE OI', 'Δ PE Vol'])
-            st.dataframe(styled_strike_df, use_container_width=True, hide_index=True)
+            
+            # --- NEW UI TABS ---
+            tab1, tab2 = st.tabs(["📊 Full Comprehensive Ledger", "📉 Isolated Delta Shifts (Excel View)"])
+            
+            with tab1:
+                st.dataframe(styled_strike_df, use_container_width=True, hide_index=True)
+                
+            with tab2:
+                col_oi, col_vol = st.columns(2)
+                
+                with col_oi:
+                    st.markdown("**Change in Open Interest**")
+                    df_oi_iso = df_strike_display[['Timestamp', 'Δ CE OI', 'Δ PE OI']].copy()
+                    df_oi_iso.columns = ['Time', 'Change in OI CE Side', 'Change in OI PE Side']
+                    st.dataframe(df_oi_iso.style.map(color_coding, subset=['Change in OI CE Side', 'Change in OI PE Side']), use_container_width=True, hide_index=True)
+                    
+                with col_vol:
+                    st.markdown("**Change in Volume**")
+                    df_vol_iso = df_strike_display[['Timestamp', 'Δ CE Vol', 'Δ PE Vol']].copy()
+                    df_vol_iso.columns = ['Time', 'Change in Volume CE', 'Change in Volume PE']
+                    st.dataframe(df_vol_iso.style.map(color_coding, subset=['Change in Volume CE', 'Change in Volume PE']), use_container_width=True, hide_index=True)
 else:
     st.info("🕒 First load of the day. Please refresh the app in a few minutes to establish the baseline Delta tracking.")
 
