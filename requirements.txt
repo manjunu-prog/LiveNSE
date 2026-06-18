@@ -5,3 +5,4 @@ requests
 pyotp
 fyers-apiv3
 psycopg2-binary
+streamlit-autorefresh
