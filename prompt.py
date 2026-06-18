@@ -449,32 +449,48 @@ if not df_micro_structure.empty:
     styled_df = df_micro_structure.style.map(color_coding, subset=['Δ CE Vol', 'Δ CE OI', 'Δ CE LTP', 'Δ PE LTP', 'Δ PE OI', 'Δ PE Vol'])
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
     
-    with st.expander("🔍 Deep Dive: Individual Strike Timeline Matrix"):
-        st.write("Select any strike to trace its absolute volume and open interest shifts over every refresh today.")
-        selected_strike = st.selectbox("Select Strike to Analyze:", target_strikes, index=5)
-        
-        df_strike = df_flow[df_flow['strike'] == selected_strike].copy()
-        df_strike.sort_values('timestamp', ascending=True, inplace=True)
-        
-        df_strike['Δ CE OI'] = df_strike['ce_oi'].diff().fillna(0).astype(int)
-        df_strike['Δ CE Vol'] = df_strike['ce_vol'].diff().fillna(0).astype(int)
-        df_strike['Δ PE OI'] = df_strike['pe_oi'].diff().fillna(0).astype(int)
-        df_strike['Δ PE Vol'] = df_strike['pe_vol'].diff().fillna(0).astype(int)
-        
-        df_strike.sort_values('timestamp', ascending=False, inplace=True)
-        df_strike['Time'] = df_strike['timestamp'].dt.strftime('%H:%M:%S')
-        
-        for col in ['Δ CE OI', 'Δ CE Vol', 'Δ PE OI', 'Δ PE Vol']:
-            df_strike[col] = df_strike[col].apply(lambda x: f"+{x:,}" if x > 0 else (f"{x:,}" if x < 0 else "0"))
-        for col in ['ce_oi', 'ce_vol', 'pe_oi', 'pe_vol']:
-            df_strike[col] = df_strike[col].apply(lambda x: f"{x:,}")
+    st.markdown("### 🔍 Interactive Strike Cascades (Version History)")
+    st.caption("Click on any strike below to expand its full refresh-by-refresh timeline.")
+
+    for selected_strike in target_strikes:
+        # Get latest LTPs for the expander title
+        latest_row = df_flow[df_flow['strike'] == selected_strike].sort_values('timestamp', ascending=False).head(1)
+        if not latest_row.empty:
+            ce_ltp = latest_row['ce_ltp'].values[0]
+            pe_ltp = latest_row['pe_ltp'].values[0]
+            expander_label = f"🎯 Strike {selected_strike}  |  Current CE: ₹{ce_ltp:.2f}  |  Current PE: ₹{pe_ltp:.2f}"
+        else:
+            expander_label = f"🎯 Strike {selected_strike}"
+
+        with st.expander(expander_label):
+            df_strike = df_flow[df_flow['strike'] == selected_strike].copy()
+            if df_strike.empty:
+                st.write("No data recorded yet.")
+                continue
+
+            # Sort ascending to calculate row-to-row diffs accurately
+            df_strike.sort_values('timestamp', ascending=True, inplace=True)
             
-        final_strike_cols = ['Time', 'ce_oi', 'Δ CE OI', 'ce_vol', 'Δ CE Vol', 'pe_oi', 'Δ PE OI', 'pe_vol', 'Δ PE Vol']
-        df_strike_display = df_strike[final_strike_cols].copy()
-        df_strike_display.columns = ['Timestamp', 'CE OI', 'Δ CE OI', 'CE Volume', 'Δ CE Vol', 'PE OI', 'Δ PE OI', 'PE Volume', 'Δ PE Vol']
-        
-        styled_strike_df = df_strike_display.style.map(color_coding, subset=['Δ CE OI', 'Δ CE Vol', 'Δ PE OI', 'Δ PE Vol'])
-        st.dataframe(styled_strike_df, use_container_width=True, hide_index=True)
+            df_strike['Δ CE OI'] = df_strike['ce_oi'].diff().fillna(0).astype(int)
+            df_strike['Δ CE Vol'] = df_strike['ce_vol'].diff().fillna(0).astype(int)
+            df_strike['Δ PE OI'] = df_strike['pe_oi'].diff().fillna(0).astype(int)
+            df_strike['Δ PE Vol'] = df_strike['pe_vol'].diff().fillna(0).astype(int)
+            
+            # Sort descending to show newest activity at the top
+            df_strike.sort_values('timestamp', ascending=False, inplace=True)
+            df_strike['Time'] = df_strike['timestamp'].dt.strftime('%H:%M:%S')
+            
+            for col in ['Δ CE OI', 'Δ CE Vol', 'Δ PE OI', 'Δ PE Vol']:
+                df_strike[col] = df_strike[col].apply(lambda x: f"+{int(x):,}" if x > 0 else (f"{int(x):,}" if x < 0 else "0"))
+            for col in ['ce_oi', 'ce_vol', 'pe_oi', 'pe_vol']:
+                df_strike[col] = df_strike[col].apply(lambda x: f"{int(x):,}")
+                
+            final_strike_cols = ['Time', 'ce_oi', 'Δ CE OI', 'ce_vol', 'Δ CE Vol', 'pe_oi', 'Δ PE OI', 'pe_vol', 'Δ PE Vol']
+            df_strike_display = df_strike[final_strike_cols].copy()
+            df_strike_display.columns = ['Timestamp', 'CE OI', 'Δ CE OI', 'CE Volume', 'Δ CE Vol', 'PE OI', 'Δ PE OI', 'PE Volume', 'Δ PE Vol']
+            
+            styled_strike_df = df_strike_display.style.map(color_coding, subset=['Δ CE OI', 'Δ CE Vol', 'Δ PE OI', 'Δ PE Vol'])
+            st.dataframe(styled_strike_df, use_container_width=True, hide_index=True)
 else:
     st.info("🕒 First load of the day. Please refresh the app in a few minutes to establish the baseline Delta tracking.")
 
