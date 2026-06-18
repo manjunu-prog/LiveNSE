@@ -10,12 +10,16 @@ import psycopg2
 import warnings
 from urllib.parse import urlparse, parse_qs
 from fyers_apiv3 import fyersModel
+from streamlit_autorefresh import st_autorefresh
 
 # Suppress pandas warning for using raw psycopg2 connection
 warnings.filterwarnings('ignore', category=UserWarning)
 
 # --- CONFIGURATION & SESSION INITIALIZATION ---
 st.set_page_config(page_title="Intraday Options Quant Matrix", layout="wide")
+
+# Run the autorefresh every 3 minutes (180,000 milliseconds)
+st_autorefresh(interval=180000, key="matrix_autorefresh")
 
 st.markdown("""
     <style>
