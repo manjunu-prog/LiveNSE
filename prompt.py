@@ -304,7 +304,7 @@ try:
     conn.autocommit = True
     c = conn.cursor()
 except Exception as e:
-    st.error("🚨 Database Connection Failed. Ensure SUPABASE_URI is added to Streamlit Secrets.")
+    st.error(f"🚨 Database Connection Failed. Exact Error: {e}")
     st.stop()
 
 # Initialize Tables
