@@ -31,6 +31,11 @@ LAST_ENTRY_TIME = datetime.time(14, 0)
 PRODUCT_TYPE = "NRML"
 ORDER_TYPE = 2       
 
+# --- IST TIMEZONE OVERRIDE ---
+IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+def get_ist_now():
+    return datetime.datetime.now(IST).replace(tzinfo=None)
+
 if "fyers_instance" not in st.session_state:
     st.session_state.fyers_instance = None
 if "authenticated" not in st.session_state:
@@ -174,8 +179,8 @@ if not options_list:
 # ENGINE STAGE 2: MATHEMATICAL MODELING & ORDER FLOW PARSING
 # =====================================================================
 target_expiry_str = chain_data.get("expiryData", [{}])[0].get("date", "")
-target_expiry = datetime.datetime.strptime(target_expiry_str, "%d-%m-%Y").date() if target_expiry_str else datetime.datetime.now().date()
-dte = max(1, (datetime.datetime.combine(target_expiry, datetime.time.min) - datetime.datetime.now()).days)
+target_expiry = datetime.datetime.strptime(target_expiry_str, "%d-%m-%Y").date() if target_expiry_str else get_ist_now().date()
+dte = max(1, (datetime.datetime.combine(target_expiry, datetime.time.min) - get_ist_now()).days)
 
 atm_call_contract = None
 put_contracts_pool = []
@@ -291,7 +296,7 @@ cond_b = (synthetic_straddle_price * 1.1) >= (0.9 * required_move)
 cond_c = abs(atm_ce_oichp) > -1.0  
 cond_d = gamma_proxy > 0.005
 cond_e = spread_compression <= 2.50 
-cond_f = datetime.datetime.now().time() < LAST_ENTRY_TIME
+cond_f = get_ist_now().time() < LAST_ENTRY_TIME
 filters_passed = sum([cond_a, cond_b, cond_c, cond_d, cond_e, cond_f])
 system_execution_passed = filters_passed >= 4
 
@@ -315,17 +320,17 @@ c.execute('''CREATE TABLE IF NOT EXISTS strike_flow
              (timestamp TIMESTAMP, strike INTEGER, ce_oi BIGINT, ce_vol BIGINT, ce_ltp REAL, 
               pe_oi BIGINT, pe_vol BIGINT, pe_ltp REAL)''')
 
-# Check for new trading day reset
+# Check for new trading day reset using IST
 c.execute("SELECT timestamp FROM flow_history ORDER BY timestamp DESC LIMIT 1")
 last_entry = c.fetchone()
 if last_entry:
     last_date = last_entry[0].date()
-    if last_date != datetime.datetime.now().date():
+    if last_date != get_ist_now().date():
         c.execute("TRUNCATE TABLE flow_history")
         c.execute("TRUNCATE TABLE strike_flow")
 
-# Insert current snapshots
-current_time = datetime.datetime.now()
+# Insert current snapshots with IST time
+current_time = get_ist_now()
 c.execute("INSERT INTO flow_history VALUES (%s, %s, %s, %s, %s)", 
           (current_time, total_ce_oi, total_pe_oi, atm_ce_oi, atm_pe_oi))
 
@@ -341,10 +346,6 @@ df_flow = pd.read_sql_query("SELECT * FROM strike_flow", conn)
 
 df_history['timestamp'] = pd.to_datetime(df_history['timestamp'])
 df_flow['timestamp'] = pd.to_datetime(df_flow['timestamp'])
-
-morning_baseline = df_history.iloc[0] if len(df_history) > 0 else None
-previous_snapshot = df_history.iloc[-2] if len(df_history) > 1 else None
-current_snapshot = df_history.iloc[-1]
 
 unique_times = np.sort(df_flow['timestamp'].unique())
 df_micro_structure = pd.DataFrame()
@@ -365,8 +366,12 @@ if len(unique_times) >= 2:
     df_delta['Δ PE OI'] = df_curr['pe_oi'] - df_prev['pe_oi']
     df_delta['Δ PE Vol'] = df_curr['pe_vol'] - df_prev['pe_vol']
     
-    for col in ['Δ CE Vol', 'Δ CE OI', 'Δ CE LTP', 'Δ PE LTP', 'Δ PE OI', 'Δ PE Vol']:
-        df_delta[col] = df_delta[col].fillna(0).apply(lambda x: f"+{x:,.2f}" if isinstance(x, float) and x > 0 else (f"{x:,.2f}" if isinstance(x, float) else (f"+{int(x):,}" if x > 0 else f"{int(x):,}")))
+    # Format with explicit signs and handle zero cleanly
+    for col in ['Δ CE Vol', 'Δ CE OI', 'Δ PE OI', 'Δ PE Vol']:
+        df_delta[col] = df_delta[col].fillna(0).apply(lambda x: f"+{int(x):,}" if x > 0 else (f"{int(x):,}" if x < 0 else "0"))
+        
+    for col in ['Δ CE LTP', 'Δ PE LTP']:
+        df_delta[col] = df_delta[col].fillna(0).apply(lambda x: f"+{x:,.2f}" if x > 0 else (f"{x:,.2f}" if x < 0 else "0.00"))
 
     df_micro_structure = df_delta.reset_index(drop=True)
 
@@ -438,7 +443,7 @@ st.markdown("---")
 
 # --- MICRO-STRUCTURE STRIKE TRACKER UI ---
 st.subheader("🔬 Micro-Structure Strike Tracker (ATM ± 5)")
-st.caption(f"Real-time order flow shifts. Showing $\Delta$ since last refresh at: {pd.to_datetime(unique_times[-2]).strftime('%H:%M:%S') if len(unique_times) >= 2 else 'N/A'}")
+st.caption(f"Real-time order flow shifts. Showing $\Delta$ since last refresh at: {pd.to_datetime(unique_times[-2]).strftime('%H:%M:%S') if len(unique_times) >= 2 else 'N/A'} (IST)")
 
 if not df_micro_structure.empty:
     styled_df = df_micro_structure.style.map(color_coding, subset=['Δ CE Vol', 'Δ CE OI', 'Δ CE LTP', 'Δ PE LTP', 'Δ PE OI', 'Δ PE Vol'])
@@ -460,7 +465,7 @@ if not df_micro_structure.empty:
         df_strike['Time'] = df_strike['timestamp'].dt.strftime('%H:%M:%S')
         
         for col in ['Δ CE OI', 'Δ CE Vol', 'Δ PE OI', 'Δ PE Vol']:
-            df_strike[col] = df_strike[col].apply(lambda x: f"+{x:,}" if x > 0 else f"{x:,}")
+            df_strike[col] = df_strike[col].apply(lambda x: f"+{x:,}" if x > 0 else (f"{x:,}" if x < 0 else "0"))
         for col in ['ce_oi', 'ce_vol', 'pe_oi', 'pe_vol']:
             df_strike[col] = df_strike[col].apply(lambda x: f"{x:,}")
             
