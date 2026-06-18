@@ -367,10 +367,8 @@ if len(unique_times) >= 2:
     df_delta['Δ PE OI'] = df_curr['pe_oi'] - df_prev['pe_oi']
     df_delta['Δ PE Vol'] = df_curr['pe_vol'] - df_prev['pe_vol']
     
-    # Store the pure numeric dataframe for the Radar UI before formatting
     numeric_delta = df_delta.copy()
     
-    # Format with explicit signs and handle zero cleanly
     for col in ['Δ CE Vol', 'Δ CE OI', 'Δ PE OI', 'Δ PE Vol']:
         df_delta[col] = df_delta[col].fillna(0).apply(lambda x: f"+{int(x):,}" if x > 0 else (f"{int(x):,}" if x < 0 else "0"))
         
@@ -378,6 +376,29 @@ if len(unique_times) >= 2:
         df_delta[col] = df_delta[col].fillna(0).apply(lambda x: f"+{x:,.2f}" if x > 0 else (f"{x:,.2f}" if x < 0 else "0.00"))
 
     df_micro_structure = df_delta.reset_index(drop=True)
+
+# Generate Narrative Timeline Data
+narrative_data = []
+if len(df_history) >= 2:
+    for i in range(1, len(df_history)):
+        prev = df_history.iloc[i-1]
+        curr = df_history.iloc[i]
+        
+        delta_ce = curr['total_ce_oi'] - prev['total_ce_oi']
+        delta_pe = curr['total_pe_oi'] - prev['total_pe_oi']
+        
+        if delta_ce > delta_pe and delta_ce > 0: bias = "🐻 Call Writers Dominating (Bearish Block)"
+        elif delta_pe > delta_ce and delta_pe > 0: bias = "🐂 Put Writers Dominating (Bullish Support)"
+        elif delta_ce < 0 and delta_pe < 0: bias = "🌪️ Unwinding / Panic Covering"
+        else: bias = "⚖️ Neutral / Ranging Flow"
+
+        narrative_data.append({
+            "Interval Window": f"{prev['timestamp'].strftime('%H:%M')} ➔ {curr['timestamp'].strftime('%H:%M')}",
+            "Δ Total Call OI": f"+{int(delta_ce):,}" if delta_ce > 0 else f"{int(delta_ce):,}",
+            "Δ Total Put OI": f"+{int(delta_pe):,}" if delta_pe > 0 else f"{int(delta_pe):,}",
+            "Market Narrative": bias
+        })
+    df_narrative = pd.DataFrame(narrative_data).iloc[::-1]
 
 # =====================================================================
 # ENGINE STAGE 4: PURE DIRECTIONAL PROBABILITY MATRIX
@@ -445,14 +466,12 @@ with col_b:
 
 st.markdown("---")
 
-# --- NEW: INSTITUTIONAL RADAR UI ---
+# --- INSTITUTIONAL RADAR UI ---
 st.subheader("🔥 Institutional Radar: Aggressive Strike Shifts")
 st.caption("Auto-detecting the top 2 strikes with the highest positive surge in Open Interest since the last refresh.")
 
 if not numeric_delta.empty:
     radar_col1, radar_col2 = st.columns(2)
-    
-    # Filter for positive OI deltas and grab the top 2 highest surges
     top_ce = numeric_delta[numeric_delta['Δ CE OI'] > 0].sort_values(by='Δ CE OI', ascending=False).head(2)
     top_pe = numeric_delta[numeric_delta['Δ PE OI'] > 0].sort_values(by='Δ PE OI', ascending=False).head(2)
     
@@ -461,7 +480,6 @@ if not numeric_delta.empty:
         <div style='background-color: rgba(74, 222, 128, 0.05); padding: 15px; border-radius: 8px; border-left: 4px solid #4ade80; margin-bottom: 15px;'>
             <h4 style='margin-top: 0; color: #4ade80;'>🟢 Top Call (CE) Surges</h4>
         """, unsafe_allow_html=True)
-        
         if not top_ce.empty:
             for idx, row in top_ce.iterrows():
                 st.markdown(f"**Strike {idx}** &nbsp; | &nbsp; Δ OI: `<span style='color:#4ade80;'>+{int(row['Δ CE OI']):,}</span>` &nbsp; | &nbsp; Δ Vol: `+{int(row['Δ CE Vol']):,}`", unsafe_allow_html=True)
@@ -474,7 +492,6 @@ if not numeric_delta.empty:
         <div style='background-color: rgba(248, 113, 113, 0.05); padding: 15px; border-radius: 8px; border-left: 4px solid #f87171; margin-bottom: 15px;'>
             <h4 style='margin-top: 0; color: #f87171;'>🔴 Top Put (PE) Surges</h4>
         """, unsafe_allow_html=True)
-        
         if not top_pe.empty:
             for idx, row in top_pe.iterrows():
                 st.markdown(f"**Strike {idx}** &nbsp; | &nbsp; Δ OI: `<span style='color:#f87171;'>+{int(row['Δ PE OI']):,}</span>` &nbsp; | &nbsp; Δ Vol: `+{int(row['Δ PE Vol']):,}`", unsafe_allow_html=True)
@@ -486,9 +503,21 @@ else:
 
 st.markdown("---")
 
+# --- NEW: INTRADAY NARRATIVE TIMELINE ---
+st.subheader("📖 The Institutional Narrative (Shift Story)")
+st.caption("Tracking the net shift in overall Call vs Put writing between every refresh to spot trend reversals.")
+
+if len(df_history) >= 2:
+    styled_narrative = df_narrative.style.map(color_coding, subset=['Δ Total Call OI', 'Δ Total Put OI'])
+    st.dataframe(styled_narrative, use_container_width=True, hide_index=True)
+else:
+    st.info("🕒 At least two refreshes are required to build the intraday narrative timeline.")
+
+st.markdown("---")
+
 # --- MICRO-STRUCTURE STRIKE TRACKER UI ---
 st.subheader("🔬 Micro-Structure Strike Tracker (ATM ± 5)")
-st.caption(f"Real-time order flow shifts. Showing Δ since last refresh at: {pd.to_datetime(unique_times[-2]).strftime('%H:%M:%S') if len(unique_times) >= 2 else 'N/A'} (IST)")
+st.caption(f"Real-time order flow shifts. Showing $\Delta$ since last refresh at: {pd.to_datetime(unique_times[-2]).strftime('%H:%M:%S') if len(unique_times) >= 2 else 'N/A'} (IST)")
 
 if not df_micro_structure.empty:
     styled_df = df_micro_structure.style.map(color_coding, subset=['Δ CE Vol', 'Δ CE OI', 'Δ CE LTP', 'Δ PE LTP', 'Δ PE OI', 'Δ PE Vol'])
@@ -512,15 +541,12 @@ if not df_micro_structure.empty:
                 st.write("No data recorded yet.")
                 continue
 
-            # Sort ascending to calculate row-to-row diffs accurately
             df_strike.sort_values('timestamp', ascending=True, inplace=True)
-            
             df_strike['Δ CE OI'] = df_strike['ce_oi'].diff().fillna(0).astype(int)
             df_strike['Δ CE Vol'] = df_strike['ce_vol'].diff().fillna(0).astype(int)
             df_strike['Δ PE OI'] = df_strike['pe_oi'].diff().fillna(0).astype(int)
             df_strike['Δ PE Vol'] = df_strike['pe_vol'].diff().fillna(0).astype(int)
             
-            # Sort descending to show newest activity at the top
             df_strike.sort_values('timestamp', ascending=False, inplace=True)
             df_strike['Time'] = df_strike['timestamp'].dt.strftime('%H:%M:%S')
             
@@ -532,24 +558,18 @@ if not df_micro_structure.empty:
             final_strike_cols = ['Time', 'ce_oi', 'Δ CE OI', 'ce_vol', 'Δ CE Vol', 'pe_oi', 'Δ PE OI', 'pe_vol', 'Δ PE Vol']
             df_strike_display = df_strike[final_strike_cols].copy()
             df_strike_display.columns = ['Timestamp', 'CE OI', 'Δ CE OI', 'CE Volume', 'Δ CE Vol', 'PE OI', 'Δ PE OI', 'PE Volume', 'Δ PE Vol']
-            
             styled_strike_df = df_strike_display.style.map(color_coding, subset=['Δ CE OI', 'Δ CE Vol', 'Δ PE OI', 'Δ PE Vol'])
             
-            # --- UI TABS ---
             tab1, tab2 = st.tabs(["📊 Full Comprehensive Ledger", "📉 Isolated Delta Shifts (Excel View)"])
-            
             with tab1:
                 st.dataframe(styled_strike_df, use_container_width=True, hide_index=True)
-                
             with tab2:
                 col_oi, col_vol = st.columns(2)
-                
                 with col_oi:
                     st.markdown("**Change in Open Interest**")
                     df_oi_iso = df_strike_display[['Timestamp', 'Δ CE OI', 'Δ PE OI']].copy()
                     df_oi_iso.columns = ['Time', 'Change in OI CE Side', 'Change in OI PE Side']
                     st.dataframe(df_oi_iso.style.map(color_coding, subset=['Change in OI CE Side', 'Change in OI PE Side']), use_container_width=True, hide_index=True)
-                    
                 with col_vol:
                     st.markdown("**Change in Volume**")
                     df_vol_iso = df_strike_display[['Timestamp', 'Δ CE Vol', 'Δ PE Vol']].copy()
