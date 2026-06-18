@@ -6,8 +6,13 @@ import requests
 import pyotp
 import base64
 import datetime
+import psycopg2
+import warnings
 from urllib.parse import urlparse, parse_qs
 from fyers_apiv3 import fyersModel
+
+# Suppress pandas warning for using raw psycopg2 connection
+warnings.filterwarnings('ignore', category=UserWarning)
 
 # --- CONFIGURATION & SESSION INITIALIZATION ---
 st.set_page_config(page_title="Intraday Options Quant Matrix", layout="wide")
@@ -37,8 +42,7 @@ NEXT_20_SYMBOLS = ["NSE:ITC-EQ", "NSE:LT-EQ", "NSE:KOTAKBANK-EQ", "NSE:AXISBANK-
 REMAINING_25_SYMBOLS = ["NSE:BAJAJFINSV-EQ", "NSE:ADANIENT-EQ", "NSE:ADANIPORTS-EQ", "NSE:NESTLEIND-EQ", "NSE:GRASIM-EQ", "NSE:ONGC-EQ", "NSE:JSWSTEEL-EQ", "NSE:HINDALCO-EQ", "NSE:CIPLA-EQ", "NSE:DRREDDY-EQ", "NSE:TATACONSUM-EQ", "NSE:WIPRO-EQ", "NSE:APOLLOHOSP-EQ", "NSE:BRITANNIA-EQ", "NSE:EICHERMOT-EQ", "NSE:HEROMOTOCO-EQ", "NSE:DIVISLAB-EQ", "NSE:TECHM-EQ", "NSE:BAJAJ-AUTO-EQ", "NSE:INDUSINDBK-EQ", "NSE:SBILIFE-EQ", "NSE:HDFCLIFE-EQ", "NSE:BPCL-EQ", "NSE:LTIM-EQ", "NSE:TRENT-EQ"]
 
 # --- SYSTEM UTILITIES ---
-def b64(s):
-    return base64.b64encode(str(s).encode()).decode()
+def b64(s): return base64.b64encode(str(s).encode()).decode()
 
 def generate_app_id_hash(app_id, app_type, app_secret):
     return hashlib.sha256(f"{app_id}-{app_type}:{app_secret}".encode()).hexdigest()
@@ -48,27 +52,21 @@ def execute_auto_login(fy_id, pin, totp_key, app_id, app_type, app_secret, redir
     try:
         r1 = session.post("https://api-t2.fyers.in/vagator/v2/send_login_otp_v2", json={"fy_id": b64(fy_id), "app_id": "2"})
         request_key = r1.json().get("request_key")
-        
         totp_code = pyotp.TOTP(totp_key).now()
         r2 = session.post("https://api-t2.fyers.in/vagator/v2/verify_otp", json={"request_key": request_key, "otp": totp_code})
         request_key = r2.json().get("request_key")
-        
         r3 = session.post("https://api-t2.fyers.in/vagator/v2/verify_pin_v2", json={"request_key": request_key, "identity_type": "pin", "identifier": b64(pin)})
         login_token = r3.json().get("data", {}).get("access_token")
-        
         r4 = session.post("https://api-t1.fyers.in/api/v3/token", json={
             "fyers_id": fy_id, "app_id": app_id, "redirect_uri": redirect_uri, "appType": app_type,
             "code_challenge": "", "state": "quant_engine", "scope": "", "nonce": "", "response_type": "code", "create_cookie": True
         }, headers={"Authorization": f"Bearer {login_token}"})
-        
         auth_url = r4.json().get("Url")
         auth_code = parse_qs(urlparse(auth_url).query).get("auth_code", [None])[0]
-        
         app_id_hash = generate_app_id_hash(app_id, app_type, app_secret)
         r5 = session.post("https://api-t1.fyers.in/api/v3/validate-authcode", json={
             "grant_type": "authorization_code", "appIdHash": app_id_hash, "code": auth_code
         })
-        
         return r5.json().get("access_token")
     except Exception as e:
         st.error(f"Authentication Failure: {str(e)}")
@@ -86,6 +84,13 @@ def get_live_quotes(fyers, symbols_list):
         return valid_quotes
     except Exception:
         return {}
+
+def color_coding(val):
+    color = ''
+    if isinstance(val, str):
+        if val.startswith('+'): color = '#4ade80' 
+        elif val.startswith('-'): color = '#f87171' 
+    return f'color: {color}' if color else ''
 
 # --- FRONTEND INTERFACE ---
 st.title("🎛️ Quantitative Index Volatility & Execution Engine")
@@ -148,7 +153,6 @@ def check_advancing(symbol):
 top5_adv = sum(check_advancing(sym) for sym in TOP_5_SYMBOLS)
 next20_adv = sum(check_advancing(sym) for sym in NEXT_20_SYMBOLS)
 rem25_adv = sum(check_advancing(sym) for sym in REMAINING_25_SYMBOLS)
-
 top25_adv = top5_adv + next20_adv
 nifty50_adv = top25_adv + rem25_adv
 
@@ -187,15 +191,33 @@ max_neg_oich_ce = {"strike": 0, "val": float('inf')}
 max_pos_oich_pe = {"strike": 0, "val": -float('inf')}
 max_neg_oich_pe = {"strike": 0, "val": float('inf')}
 
+current_strike_data = []
+target_strikes = [atm_strike + (i * 50) for i in range(-5, 6)]
+
 for contract in options_list:
     opt_type = contract.get("option_type")
     strike = contract.get("strike_price")
     oi_val = int(contract.get("oi", 0))
     vol_val = int(contract.get("volume", 0))
     oich_val = int(contract.get("oich", 0))
+    ltp_val = float(contract.get("ltp", 0.0))
     
     strike_oi_totals[strike] = strike_oi_totals.get(strike, 0) + oi_val
     
+    if strike not in [d['strike'] for d in current_strike_data]:
+        current_strike_data.append({"strike": strike, "ce_oi": 0, "ce_vol": 0, "ce_ltp": 0.0, "pe_oi": 0, "pe_vol": 0, "pe_ltp": 0.0})
+    
+    for row in current_strike_data:
+        if row['strike'] == strike:
+            if opt_type == "CE":
+                row['ce_oi'] = oi_val
+                row['ce_vol'] = vol_val
+                row['ce_ltp'] = ltp_val
+            elif opt_type == "PE":
+                row['pe_oi'] = oi_val
+                row['pe_vol'] = vol_val
+                row['pe_ltp'] = ltp_val
+
     if opt_type == "CE":
         total_ce_oi += oi_val
         total_ce_vol += vol_val
@@ -228,6 +250,7 @@ test_ce_symbol = atm_call_contract.get("symbol")
 bid_price_ce = float(atm_call_contract.get("bid", atm_call_premium))
 ask_price_ce = float(atm_call_contract.get("ask", atm_call_premium))
 atm_call_iv = float(atm_call_contract.get("greeks", {}).get("iv", 15.0))
+atm_ce_oi = int(atm_call_contract.get("oi", 0))
 atm_ce_oichp = float(atm_call_contract.get("oichp", 0.0))
 
 min_diff = float("inf")
@@ -243,6 +266,7 @@ for put in put_contracts_pool:
 matched_put_strike = matched_put_contract.get("strike_price")
 matched_put_premium = float(matched_put_contract.get("ltp", 0))
 matched_put_symbol = matched_put_contract.get("symbol")
+atm_pe_oi = int(matched_put_contract.get("oi", 0))
 atm_pe_oichp = float(matched_put_contract.get("oichp", 0.0))
 
 local_pcr = total_pe_oi / max(total_ce_oi, 1)
@@ -272,9 +296,83 @@ filters_passed = sum([cond_a, cond_b, cond_c, cond_d, cond_e, cond_f])
 system_execution_passed = filters_passed >= 4
 
 # =====================================================================
-# ENGINE STAGE 3: PURE DIRECTIONAL PROBABILITY MATRIX
+# ENGINE STAGE 3: CLOUD INTRADAY PERSISTENCE (SUPABASE POSTGRESQL)
 # =====================================================================
-# Base structural edge allocations (50/50 Start)
+try:
+    DB_URI = st.secrets["SUPABASE_URI"]
+    conn = psycopg2.connect(DB_URI)
+    conn.autocommit = True
+    c = conn.cursor()
+except Exception as e:
+    st.error("🚨 Database Connection Failed. Ensure SUPABASE_URI is added to Streamlit Secrets.")
+    st.stop()
+
+# Initialize Tables
+c.execute('''CREATE TABLE IF NOT EXISTS flow_history 
+             (timestamp TIMESTAMP, total_ce_oi BIGINT, total_pe_oi BIGINT, atm_ce_oi BIGINT, atm_pe_oi BIGINT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS strike_flow 
+             (timestamp TIMESTAMP, strike INTEGER, ce_oi BIGINT, ce_vol BIGINT, ce_ltp REAL, 
+              pe_oi BIGINT, pe_vol BIGINT, pe_ltp REAL)''')
+
+# Check for new trading day reset
+c.execute("SELECT timestamp FROM flow_history ORDER BY timestamp DESC LIMIT 1")
+last_entry = c.fetchone()
+if last_entry:
+    last_date = last_entry[0].date()
+    if last_date != datetime.datetime.now().date():
+        c.execute("TRUNCATE TABLE flow_history")
+        c.execute("TRUNCATE TABLE strike_flow")
+
+# Insert current snapshots
+current_time = datetime.datetime.now()
+c.execute("INSERT INTO flow_history VALUES (%s, %s, %s, %s, %s)", 
+          (current_time, total_ce_oi, total_pe_oi, atm_ce_oi, atm_pe_oi))
+
+for row in current_strike_data:
+    if row['strike'] in target_strikes:
+        c.execute("INSERT INTO strike_flow VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", 
+                  (current_time, row['strike'], row['ce_oi'], row['ce_vol'], row['ce_ltp'], 
+                   row['pe_oi'], row['pe_vol'], row['pe_ltp']))
+
+# Retrieve Historical Deltas for UI
+df_history = pd.read_sql_query("SELECT * FROM flow_history ORDER BY timestamp ASC", conn)
+df_flow = pd.read_sql_query("SELECT * FROM strike_flow", conn)
+
+df_history['timestamp'] = pd.to_datetime(df_history['timestamp'])
+df_flow['timestamp'] = pd.to_datetime(df_flow['timestamp'])
+
+morning_baseline = df_history.iloc[0] if len(df_history) > 0 else None
+previous_snapshot = df_history.iloc[-2] if len(df_history) > 1 else None
+current_snapshot = df_history.iloc[-1]
+
+unique_times = np.sort(df_flow['timestamp'].unique())
+df_micro_structure = pd.DataFrame()
+
+if len(unique_times) >= 2:
+    t_current = unique_times[-1]
+    t_prev = unique_times[-2]
+    
+    df_curr = df_flow[df_flow['timestamp'] == t_current].set_index('strike')
+    df_prev = df_flow[df_flow['timestamp'] == t_prev].set_index('strike')
+    
+    df_delta = pd.DataFrame(index=target_strikes)
+    df_delta['Δ CE Vol'] = df_curr['ce_vol'] - df_prev['ce_vol']
+    df_delta['Δ CE OI'] = df_curr['ce_oi'] - df_prev['ce_oi']
+    df_delta['Δ CE LTP'] = (df_curr['ce_ltp'] - df_prev['ce_ltp']).round(2)
+    df_delta['Strike (ATM: ' + str(atm_strike) + ')'] = df_delta.index
+    df_delta['Δ PE LTP'] = (df_curr['pe_ltp'] - df_prev['pe_ltp']).round(2)
+    df_delta['Δ PE OI'] = df_curr['pe_oi'] - df_prev['pe_oi']
+    df_delta['Δ PE Vol'] = df_curr['pe_vol'] - df_prev['pe_vol']
+    
+    for col in ['Δ CE Vol', 'Δ CE OI', 'Δ CE LTP', 'Δ PE LTP', 'Δ PE OI', 'Δ PE Vol']:
+        df_delta[col] = df_delta[col].fillna(0).apply(lambda x: f"+{x:,.2f}" if isinstance(x, float) and x > 0 else (f"{x:,.2f}" if isinstance(x, float) else (f"+{int(x):,}" if x > 0 else f"{int(x):,}")))
+
+    df_micro_structure = df_delta.reset_index(drop=True)
+
+# =====================================================================
+# ENGINE STAGE 4: PURE DIRECTIONAL PROBABILITY MATRIX
+# =====================================================================
 call_edge, put_edge = 50.0, 50.0
 
 if local_pcr >= 1.15: call_edge += 25.0    
@@ -283,30 +381,20 @@ elif local_pcr <= 0.85: put_edge += 25.0
 if oi_net_aggression > 12.0: call_edge += 20.0    
 elif oi_net_aggression < -12.0: put_edge += 20.0     
 
-if vix_pct_change > 2.0:
-    call_edge += 10.0; put_edge += 10.0 
-
+if vix_pct_change > 2.0: call_edge += 10.0; put_edge += 10.0 
 if top25_adv >= 16: call_edge += 30.0
 elif top25_adv <= 9: put_edge += 30.0
 
 if nifty_spot > max_pain_strike + 50: put_edge += 20.0
 elif nifty_spot < max_pain_strike - 50: call_edge += 20.0
 
-# Normalize into strict 100% directional output
 total_edge_weight = call_edge + put_edge
 prob_call = (call_edge / total_edge_weight) * 100
 prob_put = (put_edge / total_edge_weight) * 100
-
 win_prob = max(prob_call, prob_put)
 
-if not system_execution_passed:
-    trade_decision = "NO TRADE"
-else:
-    # Pure binary directional shootout
-    if prob_call >= prob_put: 
-        trade_decision = "CALL BUY"
-    else: 
-        trade_decision = "PUT BUY"
+if not system_execution_passed: trade_decision = "NO TRADE"
+else: trade_decision = "CALL BUY" if prob_call >= prob_put else "PUT BUY"
 
 total_quantity = LOT_SIZE_NIFTY * MAX_LOTS_ALLOWED
 
@@ -345,6 +433,45 @@ with col_b:
     ui_col1.metric("NIFTY 50 Spot", f"₹{nifty_spot:,.2f}")
     ui_col2.metric("Target Options Expiry", f"{target_expiry.strftime('%Y-%m-%d')}", f"{dte} DTE")
     ui_col3.metric("Resolved ATM Anchor", f"Strike {atm_strike}")
+
+st.markdown("---")
+
+# --- MICRO-STRUCTURE STRIKE TRACKER UI ---
+st.subheader("🔬 Micro-Structure Strike Tracker (ATM ± 5)")
+st.caption(f"Real-time order flow shifts. Showing $\Delta$ since last refresh at: {pd.to_datetime(unique_times[-2]).strftime('%H:%M:%S') if len(unique_times) >= 2 else 'N/A'}")
+
+if not df_micro_structure.empty:
+    styled_df = df_micro_structure.style.map(color_coding, subset=['Δ CE Vol', 'Δ CE OI', 'Δ CE LTP', 'Δ PE LTP', 'Δ PE OI', 'Δ PE Vol'])
+    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    
+    with st.expander("🔍 Deep Dive: Individual Strike Timeline Matrix"):
+        st.write("Select any strike to trace its absolute volume and open interest shifts over every refresh today.")
+        selected_strike = st.selectbox("Select Strike to Analyze:", target_strikes, index=5)
+        
+        df_strike = df_flow[df_flow['strike'] == selected_strike].copy()
+        df_strike.sort_values('timestamp', ascending=True, inplace=True)
+        
+        df_strike['Δ CE OI'] = df_strike['ce_oi'].diff().fillna(0).astype(int)
+        df_strike['Δ CE Vol'] = df_strike['ce_vol'].diff().fillna(0).astype(int)
+        df_strike['Δ PE OI'] = df_strike['pe_oi'].diff().fillna(0).astype(int)
+        df_strike['Δ PE Vol'] = df_strike['pe_vol'].diff().fillna(0).astype(int)
+        
+        df_strike.sort_values('timestamp', ascending=False, inplace=True)
+        df_strike['Time'] = df_strike['timestamp'].dt.strftime('%H:%M:%S')
+        
+        for col in ['Δ CE OI', 'Δ CE Vol', 'Δ PE OI', 'Δ PE Vol']:
+            df_strike[col] = df_strike[col].apply(lambda x: f"+{x:,}" if x > 0 else f"{x:,}")
+        for col in ['ce_oi', 'ce_vol', 'pe_oi', 'pe_vol']:
+            df_strike[col] = df_strike[col].apply(lambda x: f"{x:,}")
+            
+        final_strike_cols = ['Time', 'ce_oi', 'Δ CE OI', 'ce_vol', 'Δ CE Vol', 'pe_oi', 'Δ PE OI', 'pe_vol', 'Δ PE Vol']
+        df_strike_display = df_strike[final_strike_cols].copy()
+        df_strike_display.columns = ['Timestamp', 'CE OI', 'Δ CE OI', 'CE Volume', 'Δ CE Vol', 'PE OI', 'Δ PE OI', 'PE Volume', 'Δ PE Vol']
+        
+        styled_strike_df = df_strike_display.style.map(color_coding, subset=['Δ CE OI', 'Δ CE Vol', 'Δ PE OI', 'Δ PE Vol'])
+        st.dataframe(styled_strike_df, use_container_width=True, hide_index=True)
+else:
+    st.info("🕒 First load of the day. Please refresh the app in a few minutes to establish the baseline Delta tracking.")
 
 st.markdown("---")
 
@@ -459,7 +586,6 @@ if trade_decision == "NO TRADE":
     st.warning("🚨 FILTER CORE NOT SATISFIED — SYSTEM EMITTED CODE: NO TRADE AUTHORIZED")
 else:
     basket_payload = []
-    # Ensure only ONE purely directional leg is sent to the broker
     if trade_decision == "CALL BUY":
         basket_payload.append({"symbol": test_ce_symbol, "qty": int(total_quantity), "type": int(ORDER_TYPE), "side": 1, "productType": PRODUCT_TYPE, "limitPrice": 0, "stopPrice": 0, "validity": "DAY", "disclosedQty": 0, "offlineOrder": False})
     elif trade_decision == "PUT BUY":
