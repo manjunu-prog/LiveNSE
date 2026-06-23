@@ -97,60 +97,9 @@ def get_live_quotes(fyers, symbols_list):
 def color_coding(val):
     color = ''
     if isinstance(val, str):
-        if val.startswith('+') or "🟢" in val or "BUY" in val: color = '#4ade80' 
-        elif val.startswith('-') or "🔴" in val or "SHORTS" in val: color = '#f87171' 
+        if val.startswith('+'): color = '#4ade80' 
+        elif val.startswith('-'): color = '#f87171' 
     return f'color: {color}' if color else ''
-
-# --- ADVANCED RADAR SIGNAL INTERPRETER ---
-def calculate_orderflow_signal(d_ce_oi, d_pe_oi, d_ce_vo, d_pe_vo):
-    if d_ce_oi == 0 and d_pe_oi == 0 and d_ce_vo == 0 and d_pe_vo == 0:
-        return "⚖️ NO FLOW"
-    
-    if d_ce_oi > d_pe_oi and d_pe_vo > d_ce_vo:
-        return "🔴 PE BUY"
-    elif d_pe_oi > d_ce_oi and d_ce_vo > d_pe_vo:
-        return "🟢 CE BUY"
-    elif d_ce_oi > d_pe_oi and d_ce_vo > d_pe_vo:
-        return "📉 CE SHORTS"
-    elif d_pe_oi > d_ce_oi and d_pe_vo > d_pe_vo:
-        return "📈 PE SHORTS"
-        
-    return "⚖️ NEUTRAL"
-
-# --- POP-UP MODAL TIMELINE ENGINE ---
-@st.dialog("📋 Combined Intel Timeline Ledger", width="large")
-def show_strike_popup(strike, df_flow, is_atm_anchor):
-    title_decorator = f"🎯 Strike {strike} (ATM)" if is_atm_anchor else f"Strike {strike}"
-    st.subheader(f"Order Flow Analysis Matrix for {title_decorator}")
-    st.caption("Chronological 3-minute interval snapshots combined with Volume + Open Interest velocity tracking rules.")
-    
-    df_st = df_flow[df_flow['strike'] == strike].copy().sort_values('timestamp', ascending=True)
-    df_st['d_ce_oi'] = df_st['ce_oi'].diff().fillna(0).astype(int)
-    df_st['d_pe_oi'] = df_st['pe_oi'].diff().fillna(0).astype(int)
-    df_st['d_ce_vo'] = df_st['ce_vol'].diff().fillna(0).astype(int)
-    df_st['d_pe_vo'] = df_st['pe_vol'].diff().fillna(0).astype(int)
-    
-    signals = []
-    for _, r in df_st.iterrows():
-        signals.append(calculate_orderflow_signal(r['d_ce_oi'], r['d_pe_oi'], r['d_ce_vo'], r['d_pe_vo']))
-    df_st['🎯 ACTION SIGNAL'] = signals
-    
-    df_st.sort_values('timestamp', ascending=False, inplace=True)
-    df_st['Time'] = df_st['timestamp'].dt.strftime('%H:%M:%S %p')
-    
-    df_render = pd.DataFrame()
-    df_render['Timestamp'] = df_st['Time']
-    df_render['🎯 ACTION SIGNAL'] = df_st['🎯 ACTION SIGNAL']
-    df_render['Change in OI - CE'] = df_st['d_ce_oi'].apply(lambda x: f"+{int(x):,}" if x > 0 else (f"{int(x):,}" if x < 0 else "0"))
-    df_render['Change in OI - PE'] = df_st['d_pe_oi'].apply(lambda x: f"+{int(x):,}" if x > 0 else (f"{int(x):,}" if x < 0 else "0"))
-    df_render['Change in Vol - CE'] = df_st['d_ce_vo'].apply(lambda x: f"+{int(x):,}" if x > 0 else (f"{int(x):,}" if x < 0 else "0"))
-    df_render['Change in Vol - PE'] = df_st['d_pe_vo'].apply(lambda x: f"+{int(x):,}" if x > 0 else (f"{int(x):,}" if x < 0 else "0"))
-    
-    styled_popup = df_render.style.map(
-        color_coding, 
-        subset=['🎯 ACTION SIGNAL', 'Change in OI - CE', 'Change in OI - PE', 'Change in Vol - CE', 'Change in Vol - PE']
-    )
-    st.dataframe(styled_popup, use_container_width=True, hide_index=True)
 
 # --- FRONTEND INTERFACE ---
 st.title("🎛️ Quantitative Index Volatility & Execution Engine")
@@ -424,26 +373,13 @@ if len(unique_times) >= 2:
     
     numeric_delta = df_delta.copy()
     
-    # Process row indicators side by side to append active 3m tags directly into the tracker frame
-    active_row_signals = []
-    for strike_idx in target_strikes:
-        d_ce_oi = df_delta.loc[strike_idx, 'Δ CE OI']
-        d_pe_oi = df_delta.loc[strike_idx, 'Δ PE OI']
-        d_ce_vo = df_delta.loc[strike_idx, 'Δ CE Vol']
-        d_pe_vo = df_delta.loc[strike_idx, 'Δ PE Vol']
-        active_row_signals.append(calculate_orderflow_signal(d_ce_oi, d_pe_oi, d_ce_vo, d_pe_vo))
-    
-    df_delta['🎯 ACTIVE RADAR SIGNAL'] = active_row_signals
-    
     for col in ['Δ CE Vol', 'Δ CE OI', 'Δ PE OI', 'Δ PE Vol']:
         df_delta[col] = df_delta[col].fillna(0).apply(lambda x: f"+{int(x):,}" if x > 0 else (f"{int(x):,}" if x < 0 else "0"))
         
     for col in ['Δ CE LTP', 'Δ PE LTP']:
         df_delta[col] = df_delta[col].fillna(0).apply(lambda x: f"+{x:,.2f}" if x > 0 else (f"{x:,.2f}" if x < 0 else "0.00"))
 
-    # Reorder structure column sequences to include the signal right next to the strike anchors
-    final_micro_cols = ['Strike (ATM: ' + str(atm_strike) + ')', '🎯 ACTIVE RADAR SIGNAL', 'Δ CE OI', 'Δ CE Vol', 'Δ CE LTP', 'Δ PE OI', 'Δ PE Vol', 'Δ PE LTP']
-    df_micro_structure = df_delta[final_micro_cols].reset_index(drop=True)
+    df_micro_structure = df_delta.reset_index(drop=True)
 
 # Generate Narrative Timeline Data
 narrative_data = []
@@ -588,25 +524,61 @@ st.subheader("🔬 Micro-Structure Strike Tracker (ATM ± 5)")
 st.caption(f"Real-time order flow shifts. Showing $\Delta$ since last refresh at: {pd.to_datetime(unique_times[-2]).strftime('%H:%M:%S') if len(unique_times) >= 2 else 'N/A'} (IST)")
 
 if not df_micro_structure.empty:
-    styled_df = df_micro_structure.style.map(color_coding, subset=['🎯 ACTIVE RADAR SIGNAL', 'Δ CE Vol', 'Δ CE OI', 'Δ CE LTP', 'Δ PE LTP', 'Δ PE OI', 'Δ PE Vol'])
+    styled_df = df_micro_structure.style.map(color_coding, subset=['Δ CE Vol', 'Δ CE OI', 'Δ CE LTP', 'Δ PE LTP', 'Δ PE OI', 'Δ PE Vol'])
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
     
-    st.markdown("### 🔍 Interactive Strike Cascades (Modal Windows)")
-    st.caption("Click on any strike vector button below to trigger its chronological execution intelligence pop-up.")
+    st.markdown("### 🔍 Interactive Strike Cascades (Version History)")
+    st.caption("Click on any strike below to expand its full refresh-by-refresh timeline.")
 
-    # Render dynamic buttons aligned into clean row slots
-    grid_container = st.container()
-    with grid_container:
-        cols_per_row = 4
-        for i in range(0, len(target_strikes), cols_per_row):
-            row_strikes = target_strikes[i:i+cols_per_row]
-            btn_cols = st.columns(cols_per_row)
-            for idx, selected_strike in enumerate(row_strikes):
-                is_atm_anchor = (selected_strike == atm_strike)
-                label = f"🎯 Strike {selected_strike} (ATM)" if is_atm_anchor else f"🔢 Strike {selected_strike}"
-                with btn_cols[idx]:
-                    if st.button(label, key=f"popup_btn_{selected_strike}", use_container_width=True):
-                        show_strike_popup(selected_strike, df_flow, is_atm_anchor)
+    for selected_strike in target_strikes:
+        latest_row = df_flow[df_flow['strike'] == selected_strike].sort_values('timestamp', ascending=False).head(1)
+        if not latest_row.empty:
+            ce_ltp = latest_row['ce_ltp'].values[0]
+            pe_ltp = latest_row['pe_ltp'].values[0]
+            expander_label = f"🎯 Strike {selected_strike}  |  Current CE: ₹{ce_ltp:.2f}  |  Current PE: ₹{pe_ltp:.2f}"
+        else:
+            expander_label = f"🎯 Strike {selected_strike}"
+
+        with st.expander(expander_label):
+            df_strike = df_flow[df_flow['strike'] == selected_strike].copy()
+            if df_strike.empty:
+                st.write("No data recorded yet.")
+                continue
+
+            df_strike.sort_values('timestamp', ascending=True, inplace=True)
+            df_strike['Δ CE OI'] = df_strike['ce_oi'].diff().fillna(0).astype(int)
+            df_strike['Δ CE Vol'] = df_strike['ce_vol'].diff().fillna(0).astype(int)
+            df_strike['Δ PE OI'] = df_strike['pe_oi'].diff().fillna(0).astype(int)
+            df_strike['Δ PE Vol'] = df_strike['pe_vol'].diff().fillna(0).astype(int)
+            
+            df_strike.sort_values('timestamp', ascending=False, inplace=True)
+            df_strike['Time'] = df_strike['timestamp'].dt.strftime('%H:%M:%S')
+            
+            for col in ['Δ CE OI', 'Δ CE Vol', 'Δ PE OI', 'Δ PE Vol']:
+                df_strike[col] = df_strike[col].apply(lambda x: f"+{int(x):,}" if x > 0 else (f"{int(x):,}" if x < 0 else "0"))
+            for col in ['ce_oi', 'ce_vol', 'pe_oi', 'pe_vol']:
+                df_strike[col] = df_strike[col].apply(lambda x: f"{int(x):,}")
+                
+            final_strike_cols = ['Time', 'ce_oi', 'Δ CE OI', 'ce_vol', 'Δ CE Vol', 'pe_oi', 'Δ PE OI', 'pe_vol', 'Δ PE Vol']
+            df_strike_display = df_strike[final_strike_cols].copy()
+            df_strike_display.columns = ['Timestamp', 'CE OI', 'Δ CE OI', 'CE Volume', 'Δ CE Vol', 'PE OI', 'Δ PE OI', 'PE Volume', 'Δ PE Vol']
+            styled_strike_df = df_strike_display.style.map(color_coding, subset=['Δ CE OI', 'Δ CE Vol', 'Δ PE OI', 'Δ PE Vol'])
+            
+            tab1, tab2 = st.tabs(["📊 Full Comprehensive Ledger", "📉 Isolated Delta Shifts (Excel View)"])
+            with tab1:
+                st.dataframe(styled_strike_df, use_container_width=True, hide_index=True)
+            with tab2:
+                col_oi, col_vol = st.columns(2)
+                with col_oi:
+                    st.markdown("**Change in Open Interest**")
+                    df_oi_iso = df_strike_display[['Timestamp', 'Δ CE OI', 'Δ PE OI']].copy()
+                    df_oi_iso.columns = ['Time', 'Change in OI CE Side', 'Change in OI PE Side']
+                    st.dataframe(df_oi_iso.style.map(color_coding, subset=['Change in OI CE Side', 'Change in OI PE Side']), use_container_width=True, hide_index=True)
+                with col_vol:
+                    st.markdown("**Change in Volume**")
+                    df_vol_iso = df_strike_display[['Timestamp', 'Δ CE Vol', 'Δ PE Vol']].copy()
+                    df_vol_iso.columns = ['Time', 'Change in Volume CE', 'Change in Volume PE']
+                    st.dataframe(df_vol_iso.style.map(color_coding, subset=['Change in Volume CE', 'Change in Volume PE']), use_container_width=True, hide_index=True)
 else:
     st.info("🕒 First load of the day. Please refresh the app in a few minutes to establish the baseline Delta tracking.")
 
